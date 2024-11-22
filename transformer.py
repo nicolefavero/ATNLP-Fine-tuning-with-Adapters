@@ -53,3 +53,38 @@ class MultiHeadAttention(nn.Module):
       attn_output = self.out_proj(attn)
 
       return attn_output
+
+
+class TransformerBlock(nn.Module):
+    def __init__(self, emb_dim, num_heads, dropout, forward_dim):
+        super().__init__()
+
+	self.emb_dim = emb_dim
+	self.num_heads = num_heads
+	self.dropout = nn.Dropout(dropout)
+	self.forward_dim = forward_dim
+
+	self.norm = nn.LayerNorm(eps=1e-6)
+	self.forward_norm = nn.LayerNorm(eps=1e-6)
+
+	self.FNN = nn.Sequential(
+		nn.Linear(self.emb_dim, self.forward_dim),
+		nn.ReLU(),
+		nn.Linear(self.forward_dim, self.emb_dim)
+	)
+
+    def forward(self, query, key, value, mask):
+	# Attention
+	attn = MultiHeadAttention(self.emb_dim, self.num_heads)
+	attn = attn(query, key, value, mask)
+	attn = attn + query # Skip con
+	attn = self.dropout(attn)
+	attn = self.norm(attn)
+
+	# Feed Forward
+	output = self.FFN(attn)
+	output = output + attn # Skip con
+	output = self.dropout(output)
+	output = self.forward_norm(output)
+	    
+        return output
