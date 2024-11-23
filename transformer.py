@@ -65,8 +65,8 @@ class TransformerBlock(nn.Module):
 	self.dropout = nn.Dropout(dropout)
 	self.forward_dim = forward_dim
 
-	self.norm = nn.LayerNorm(eps=1e-6)
-	self.forward_norm = nn.LayerNorm(eps=1e-6)
+	self.norm = nn.LayerNorm(emb_dim, eps=1e-6)
+	self.forward_norm = nn.LayerNorm(emb_dim, eps=1e-6)
 
 	self.FNN = nn.Sequential(
 		nn.Linear(self.emb_dim, self.forward_dim),
@@ -125,19 +125,85 @@ class Encoder(nn.Module):
 
 	pos_weight = get_sinusoid_table(max_len + 1, emb_dim)
 	self.tok_emb = nn.Embedding(vocab_size, emb_dim, _freeze=True)
-	self.pos_emb = nn.Embedding(vocab_size, emb_dim, _freeze=True).from_pretrained(pos_weight)
+	self.pos_emb = nn.Embedding(max_len, emb_dim, _freeze=True).from_pretrained(pos_weight)
 	
         self.transformer_blocks = nn.ModuleList(
 		[TransformerBlock(emb_dim, num_heads, dropout, forward_dim) for i in range(num_layers)]
 	)
 
     def forward(self, x, mask):
+	seq_len = x.size(1)
 	tok_emb = self.tok_emb(x)
-	pos_emb = self.pos_emb(torch.arange(1, self.max_len + 1, device=x.device))
-	embedding = tok_emb + pos_emb
+	pos_emb = self.pos_emb(torch.arange(1, seq_len + 1, device=x.device))
+	embedding = tok_emb + pos_emb.unsqueeze(0)
 	embedding = self.dropout(embedding)
 
 	for block in self.transformer_blocks:
 		output = block(embedding, embedding, embedding, mask)
+
+        return output
+
+class DecoderBlock(nn.Module):
+    def __init__(self, emb_dim, num_heads, forward_dim, dropout):
+        super().__init__()
+	self.emb_dim = emb_dim
+	self.num_heads = num_heads
+	self.forward_dim = forward_dim
+	self.dropout = nn.Dropout(dropout)
+
+	self.norm = nn.LayerNorm(emb_dim, ps=1e-6)
+	self.attn = MultiHeadAttention(emb_dim, num_heads)
+	self.transformer_block = TransformerBlock(emb_dim, num_heads, dropout, forward_dim)
+	
+
+    def forward(self, x, value, key, src_mask, tgt_mask):
+        attn = self.attn(x, x, x, tgt_mask)
+	attn = attn + x
+	attn = self.dropout(attn)
+	attn = self.norm(attn)
+
+	output = self.transformer_block(attn, value, key, src_mask)
+
+        return output
+
+
+class Decoder(nn.Module):
+    def __init__(
+        self,
+        vocab_size,
+        emb_dim,
+        num_layers,
+        num_heads,
+        forward_dim,
+        dropout,
+        max_len
+    ):
+        super().__init__()
+	self.vocab_size = vocab_size
+	self.emb_dim = emb_dim
+	self.num_layers = num_layers
+	self.num_heads = num_heads
+	self.forward_dim = forward_dim
+	self.dropout = nn.Dropout(dropout)
+	self.max_len = max_len
+
+	self.tok_emb = nn.Embedding(vocab_size, emb_dim, _freeze=True)
+	self.pos_emb = nn.Embedding(max_len, emb_dim)
+	self.decoder_blocks = nn.ModuleList(
+		[DecoderBlock(emb_dim, num_heads, forward_dim, dropout) for i in range(num_layers)]
+	)
+	self.out_layer = nn.Linear(emb_dim, vocab_size)
+
+    def forward(self, x, encoder_out, src_mask, tgt_mask):
+        tok_emb = self.tok_emb(x)
+	seq_len = x.size(1)
+        positions = torch.arange(seq_len, device=x.device).unsqueeze(0).expand(x.size(0), seq_len)
+	pos_emb = self.pos_emb(positions)
+	embedding = tok_emb + pos_emb
+
+	for block in self.decoder_blocks:
+            output = block(x, encoder_out, src_mask, tgt_mask)
+
+        output = self.out_layer(x)
 
         return output
