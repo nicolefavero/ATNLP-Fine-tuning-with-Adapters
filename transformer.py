@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, emb_dim, num_heads):
@@ -87,4 +88,56 @@ class TransformerBlock(nn.Module):
 	output = self.dropout(output)
 	output = self.forward_norm(output)
 	    
+        return output
+
+def get_sinusoid_table(max_len, emb_dim):
+    def get_angle(pos, i, emb_dim):
+        return pos / 10000 ** ((2 * (i // 2)) / emb_dim)
+
+    sinusoid_table = torch.zeros(max_len, emb_dim)
+    for pos in range(max_len):
+        for i in range(emb_dim):
+            if i % 2 == 0:
+                sinusoid_table[pos, i] = math.sin(get_angle(pos, i, emb_dim))
+            else:
+                sinusoid_table[pos, i] = math.cos(get_angle(pos, i, emb_dim))
+    return sinusoid_table
+
+class Encoder(nn.Module):
+    def __init__(
+        self,
+        vocab_size,
+        emb_dim,
+        num_layers,
+        num_heads,
+        forward_dim,
+        dropout,
+        max_len,
+    ):
+        super().__init__()
+	self.vocab_size = vocab_size
+	self.emb_dim = emb_dim
+	self.num_layers = num_layers
+	self.num_heads = num_heads
+	self.forward_dim = forward_dim
+	self.dropout = nn.Dropout(dropout)
+	self.max_len = max_len
+
+	pos_weight = get_sinusoid_table(max_len + 1, emb_dim)
+	self.tok_emb = nn.Embedding(vocab_size, emb_dim, _freeze=True)
+	self.pos_emb = nn.Embedding(vocab_size, emb_dim, _freeze=True).from_pretrained(pos_weight)
+	
+        self.transformer_blocks = nn.ModuleList(
+		[TransformerBlock(emb_dim, num_heads, dropout, forward_dim) for i in range(num_layers)]
+	)
+
+    def forward(self, x, mask):
+	tok_emb = self.tok_emb(x)
+	pos_emb = self.pos_emb(torch.arange(1, self.max_len + 1, device=x.device))
+	embedding = tok_emb + pos_emb
+	embedding = self.dropout(embedding)
+
+	for block in self.transformer_blocks:
+		output = block(embedding, embedding, embedding, mask)
+
         return output
