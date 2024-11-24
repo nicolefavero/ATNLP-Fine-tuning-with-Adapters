@@ -24,8 +24,10 @@ class MultiHeadAttention(nn.Module):
         return hidden_states.permute(0, 2, 1, 3)
 
     def _merge_heads(self, hidden_states):
-        batch_size, seq_len, num_heads, head_dim = hidden_states.shape
-        hidden_states = hidden_states.reshape(batch_size, seq_len, num_heads * head_dim)
+        batch_size, num_heads, seq_len, head_dim = hidden_states.shape
+        hidden_states = hidden_states.reshape(
+            batch_size, seq_len, self.num_heads * self.head_dim
+        )
 
         return hidden_states
 
@@ -71,17 +73,17 @@ class TransformerBlock(nn.Module):
             nn.ReLU(),
             nn.Linear(self.forward_dim, self.emb_dim),
         )
+        self.attn = MultiHeadAttention(self.emb_dim, self.num_heads)
 
     def forward(self, query, key, value, mask):
         # Attention
-        attn = MultiHeadAttention(self.emb_dim, self.num_heads)
-        attn = attn(query, key, value, mask)
+        attn = self.attn(query, key, value, mask)
         attn = attn + query  # Skip con
         attn = self.dropout(attn)
         attn = self.norm(attn)
 
         # Feed Forward
-        output = self.FFN(attn)
+        output = self.FNN(attn)
         output = output + attn  # Skip con
         output = self.dropout(output)
         output = self.forward_norm(output)
@@ -132,7 +134,7 @@ class Encoder(nn.Module):
         self.transformer_blocks = nn.ModuleList(
             [
                 TransformerBlock(emb_dim, num_heads, dropout, forward_dim)
-                for i in range(num_layers)
+                for _ in range(num_layers)
             ]
         )
 
@@ -157,7 +159,7 @@ class DecoderBlock(nn.Module):
         self.forward_dim = forward_dim
         self.dropout = nn.Dropout(dropout)
 
-        self.norm = nn.LayerNorm(emb_dim, ps=1e-6)
+        self.norm = nn.LayerNorm(emb_dim, eps=1e-6)
         self.attn = MultiHeadAttention(emb_dim, num_heads)
         self.transformer_block = TransformerBlock(
             emb_dim, num_heads, dropout, forward_dim
@@ -209,11 +211,12 @@ class Decoder(nn.Module):
         embedding = tok_emb + pos_emb
 
         for block in self.decoder_blocks:
-            output = block(embedding, encoder_out, src_mask, tgt_mask)
+            output = block(embedding, encoder_out, encoder_out, src_mask, tgt_mask)
 
         output = self.out_layer(output)
 
         return output
+
 
 class Transformer(nn.Module):
     def __init__(
@@ -303,6 +306,8 @@ def main():
     assert (
         out.shape == expected_out_shape
     ), f"wrong output shape, expected: {expected_out_shape}"
+
+    print("Passed test!")
 
 
 if __name__ == "__main__":
