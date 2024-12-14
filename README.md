@@ -11,7 +11,7 @@ The goal of this project is to evaluate the compositional generalization capabil
 
 This project is designed for educational purposes.
 
-The Transformer model used in this repository follows the original implementation from [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) paper by Vaswani et al., incorporating multi-head self-attention, positional encodings, and feed-forward layers.
+The Transformer model used in this repository follows the implementation done by Vaswani et al., incorporating multi-head self-attention, positional encodings, and feed-forward layers.
 
 
 ## Dependencies
