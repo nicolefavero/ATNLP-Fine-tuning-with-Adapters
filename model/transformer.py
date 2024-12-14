@@ -25,10 +25,9 @@ class MultiHeadAttention(nn.Module):
 
     def _merge_heads(self, hidden_states):
         batch_size, num_heads, seq_len, head_dim = hidden_states.shape
-        hidden_states = hidden_states.reshape(
+        hidden_states = hidden_states.permute(0, 2, 1, 3).reshape(
             batch_size, seq_len, self.num_heads * self.head_dim
         )
-
         return hidden_states
 
     def forward(self, query, key, value, mask=None):
