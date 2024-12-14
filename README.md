@@ -1,6 +1,6 @@
 # ATNLP-Project: Transformer-Based SCAN Task
 
-This repository is a reimplementation of experiments from the paper [*Generalization without Systematicity: On the Compositional Skills of Sequence-to-Sequence Recurrent Networks*](https://arxiv.org/abs/1711.00350) by Brendan Lake and Marco Baroni. Instead of using RNNs, GRUs, or LSTMs as in the original paper, we implement a Transformer-based model inspired by the architecture proposed in the groundbreaking paper [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) by Vaswani et al. 
+This repository is a reimplementation of experiments from the paper [*Generalization without Systematicity: On the Compositional Skills of Sequence-to-Sequence Recurrent Networks*](https://arxiv.org/abs/1711.00350) by Brendan Lake and Marco Baroni. Instead of using RNNs, GRUs, or LSTMs as in the original paper, we implement a Transformer-based model inspired by the architecture proposed in the paper [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) by Vaswani et al. 
 
 
 ## Introduction
@@ -11,7 +11,7 @@ The goal of this project is to evaluate the compositional generalization capabil
 
 This project is designed for educational purposes.
 
-The Transformer model used in this repository follows the original implementation from the seminal [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) paper by Vaswani et al., incorporating multi-head self-attention, positional encodings, and feed-forward layers.
+The Transformer model used in this repository follows the original implementation from [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) paper by Vaswani et al., incorporating multi-head self-attention, positional encodings, and feed-forward layers.
 
 
 ## Dependencies
