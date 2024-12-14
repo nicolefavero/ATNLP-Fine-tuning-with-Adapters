@@ -8,6 +8,25 @@ from model.transformer import Transformer
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score
 import numpy as np
+from torchmetrics import Accuracy
+from torchmetrics import Metric
+
+class SequenceAccuracy(Metric):
+    def __init__(self, dist_sync_on_step=False):
+        super().__init__(dist_sync_on_step=dist_sync_on_step)
+        self.add_state("correct", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state("total", default=torch.tensor(0), dist_reduce_fx="sum")
+
+    def update(self, preds: torch.Tensor, target: torch.Tensor):
+        # Assuming preds and target are both tensors of shape (batch_size, sequence_length)
+        # and contain the same type of data (e.g., token indices)
+        batch_size = preds.size(0)
+        correct_sequences = (preds == target).all(dim=1).sum()
+        self.correct += correct_sequences
+        self.total += batch_size
+
+    def compute(self):
+        return self.correct.float() / self.total
 
 GRAD_CLIP = 1
 
@@ -15,185 +34,229 @@ GRAD_CLIP = 1
 def train_epoch_teacher_forcing(model, dataloader, optimizer, criterion, device):
     model.train()
     total_loss = 0
-
+    
     for batch in tqdm(dataloader, desc="Training"):
         src = batch["src"].to(device)
         tgt = batch["tgt"].to(device)
-
+        
         tgt_input = tgt[:, :-1]
         tgt_output = tgt[:, 1:]
-
+        
         optimizer.zero_grad()
         output = model(src, tgt_input)
-
+        
         output = output.reshape(-1, output.shape[-1])
         tgt_output = tgt_output.reshape(-1)
-
+        
         loss = criterion(output, tgt_output)
         loss.backward()
         nn_utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
         optimizer.step()
-
+        
         total_loss += loss.item()
-
+    
     return total_loss / len(dataloader)
 
+
+def evaluate_greedy_search(model, dataloader, criterion, device):
+    model.eval()
+    total_loss = 0
+
+    tgt_eos_idx = dataloader.dataset.tgt_vocab.tok2id["<EOS>"]
+    tgt_bos_idx = dataloader.dataset.tgt_vocab.tok2id["<BOS>"]
+    tgt_pad_idx = dataloader.dataset.tgt_vocab.tok2id["<PAD>"]
+    accuracy = Accuracy(ignore_index=tgt_pad_idx, task='multiclass', 
+                    num_classes=dataloader.dataset.tgt_vocab.vocab_size).to(device)
+    seq_accuracy = SequenceAccuracy().to(device)
+
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Evaluating Greedy Search"):
+            src = batch["src"].to(device)
+            tgt = batch["tgt"].to(device)
+
+            tgt_output = tgt[:, 1:]
+
+            output = greedy_decode(model, src, tgt_eos_idx, tgt_bos_idx, device, return_logits=True)
+            flattened_output = output.reshape(-1, output.shape[-1])
+            flattened_tgt = tgt_output.reshape(-1)
+            accuracy.update(flattened_output.argmax(dim=-1), flattened_tgt)
+            
+            pred_sequences = output.argmax(dim=-1) 
+            seq_accuracy.update(pred_sequences, tgt_output)
+
+            loss = criterion(flattened_output, flattened_tgt)
+            total_loss += loss.item()
+    acc = accuracy.compute()
+    seq_acc = seq_accuracy.compute()
+    return total_loss / len(dataloader), acc, seq_acc
 
 def evaluate_teacher_forcing(model, dataloader, criterion, device):
     model.eval()
     total_loss = 0
 
+    tgt_pad_idx = dataloader.dataset.tgt_vocab.tok2id["<PAD>"]
+    accuracy = Accuracy(ignore_index=tgt_pad_idx, task='multiclass', 
+                        num_classes=dataloader.dataset.tgt_vocab.vocab_size).to(device)
+    seq_accuracy = SequenceAccuracy().to(device)
+
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Evaluating"):
+        for batch in tqdm(dataloader, desc="Evaluating Teacher Forcing"):
             src = batch["src"].to(device)
             tgt = batch["tgt"].to(device)
 
             tgt_input = tgt[:, :-1]
             tgt_output = tgt[:, 1:]
 
+            # Directly pass src and tgt_input to the model
             output = model(src, tgt_input)
-            output = output.reshape(-1, output.shape[-1])
-            tgt_output = tgt_output.reshape(-1)
+            flattened_output = output.reshape(-1, output.shape[-1])
+            flattened_tgt = tgt_output.reshape(-1)
+            accuracy.update(flattened_output.argmax(dim=-1), flattened_tgt)
+            
+            pred_sequences = output.argmax(dim=-1) 
+            seq_accuracy.update(pred_sequences, tgt_output)
 
-            loss = criterion(output, tgt_output)
+            loss = criterion(flattened_output, flattened_tgt)
             total_loss += loss.item()
+    acc = accuracy.compute()
+    seq_acc = seq_accuracy.compute()
 
-    return total_loss / len(dataloader)
+    return total_loss / len(dataloader), acc, seq_acc
 
-def train_epoch_mix(model, dataloader, optimizer, criterion, device, p_greedy=0.3):
-    model.train()
+def evaluate_oracle_greedy_search(model, dataloader, criterion, device):
+    model.eval()
     total_loss = 0
 
-    for batch in tqdm(dataloader, desc="Training"):
-        src = batch["src"].to(device)
-        tgt = batch["tgt"].to(device)
-        tgt_input = tgt[:, :-1]
-        tgt_output = tgt[:, 1:]
-        
-        optimizer.zero_grad()
-                
-        if np.random.rand() < p_greedy:
-            encoder_out = model.encoder(src, model.create_src_mask(src))
-            decoder_input = tgt_input[:, 0].unsqueeze(1)
-            outputs = []
+    tgt_eos_idx = dataloader.dataset.tgt_vocab.tok2id["<EOS>"]
+    tgt_bos_idx = dataloader.dataset.tgt_vocab.tok2id["<BOS>"]
+    tgt_pad_idx = dataloader.dataset.tgt_vocab.tok2id["<PAD>"]
+    accuracy = Accuracy(ignore_index=tgt_pad_idx, task='multiclass', 
+                    num_classes=dataloader.dataset.tgt_vocab.vocab_size).to(device)
+    seq_accuracy = SequenceAccuracy().to(device)
 
-            for i in range(tgt_input.size(1)):
-                tgt_mask = model.create_tgt_mask(decoder_input)
-                step_output = model.decoder(decoder_input, encoder_out, 
-                                         model.create_src_mask(src), tgt_mask)
-                outputs.append(step_output[:, -1:, :])
-                
-                if i < tgt_input.size(1) - 1:
-                    next_token = step_output[:, -1:].argmax(-1)
-                    decoder_input = torch.cat([decoder_input, next_token], dim=1)
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Evaluating Oracle Greedy Search"):
+            src = batch["src"].to(device)
+            tgt = batch["tgt"].to(device)
+
+            tgt_output = tgt[:, 1:]
+
+            output = oracle_greedy_search(model, src, tgt_eos_idx, tgt_bos_idx, tgt_output, device, return_logits=True)
+            flattened_output = output.reshape(-1, output.shape[-1])
+            flattened_tgt = tgt_output.reshape(-1)
+            accuracy.update(flattened_output.argmax(dim=-1), flattened_tgt)
             
-            output = torch.cat(outputs, dim=1)
-        else:
-            output = model(src, tgt_input)
+            pred_sequences = output.argmax(dim=-1) 
+            seq_accuracy.update(pred_sequences, tgt_output)
 
-        output = output.reshape(-1, output.shape[-1])
-        tgt_output = tgt_output.reshape(-1)
-        
-        loss = criterion(output, tgt_output)
-        loss.backward()
-        nn_utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
-        optimizer.step()
-
-        total_loss += loss.item()
-
-    return total_loss / len(dataloader)
+            loss = criterion(flattened_output, flattened_tgt)
+            total_loss += loss.item()
+    acc = accuracy.compute()
+    seq_acc = seq_accuracy.compute()
+    return total_loss / len(dataloader), acc, seq_acc
 
 @torch.no_grad()
-def greedy_decode(model, src, tgt_all, dataset, device, max_len=128):
+def greedy_decode(model, src, tgt_eos_idx, tgt_bos_idx, device, max_len=128, return_logits=False):
     """
     Perform greedy decoding for a batch of source sequences using the given model.
     
     Args:
         model: The seq2seq transformer model.
         src: Tensor of shape [batch_size, src_seq_len], source sequences.
-        dataset: The dataset object that contains vocab information.
-        device: Torch device (cuda or cpu).
-        max_len: Maximum decoding length.
-
+        tgt_eos_idx: Index of the end-of-sequence token in the target vocabulary.
+        tgt_bos_idx: Index of the beginning-of-sequence token in the target vocabulary.
+        device: Device to perform computations on.
+        max_len: Maximum length of the generated sequences.
+        return_logits: Whether to return the logits of each generated token.
     Returns:
         decoded_sequences: A tensor of shape [batch_size, decoded_length] containing the generated token indices.
     """
     model.eval()
     
-    tgt_eos_idx = dataset.tgt_vocab.tok2id["<EOS>"]
-    tgt_bos_idx = dataset.tgt_vocab.tok2id["<BOS>"]
-    
     batch_size = src.size(0)
-
-
     encode_out = model.encoder(src, model.create_src_mask(src))
     pred = torch.full((batch_size, 1), tgt_bos_idx, dtype=torch.long, device=device)
     
     finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+    all_logits = []
     
-    for _ in range(max_len):
+    for _ in range(max_len - 1):
+        if torch.all(finished):
+            break
+        
         tgt_mask = model.create_tgt_mask(pred)
         decode_out = model.decoder(pred, encode_out, model.create_src_mask(src), tgt_mask)
         
         last_step_logits = decode_out[:, -1, :]
-
-        next_tokens = torch.argmax(last_step_logits, dim=-1)
+        all_logits.append(last_step_logits)
         
+        next_tokens = torch.argmax(last_step_logits, dim=-1)
         next_tokens = next_tokens.unsqueeze(1)
-        pred = torch.cat([pred, next_tokens], dim=1) 
+        pred = torch.cat([pred, next_tokens], dim=1)
         
         newly_finished = next_tokens.squeeze(1) == tgt_eos_idx
         finished = finished | newly_finished
-        
-        if torch.all(finished):
-            break
     
+    if return_logits:
+        logits = torch.stack(all_logits, dim=1)
+        if logits.size(1) < max_len-1:
+            pad_size = (max_len-1) - logits.size(1)
+            logits = F.pad(logits, (0, 0, 0, pad_size))
+        else:
+            logits = logits[:, :(max_len-1), :]
+        return logits
     return pred
 
-def constrained_greedy_search(model, test_loader, dataset, device):
-    tgt_eos_idx = dataset.tgt_vocab.tok2id["<EOS>"]
-    tgt_pad_idx = dataset.tgt_vocab.tok2id["<PAD>"]
-    tgt_bos_idx = dataset.tgt_vocab.tok2id["<BOS>"]
-    max_len = dataset.max_len
-
+@torch.no_grad()
+def oracle_greedy_search(model, src, tgt_eos_idx, tgt_bos_idx, tgt_output, device, max_len=128, return_logits=False):
+    """
+    Perform greedy decoding for a batch of source sequences using the given model.
+    Uses the target length to forve the model to generate at least the target length.
+    """
     model.eval()
-    all_preds = []
-    all_targets = []
 
-    with torch.no_grad():
-        for batch in test_loader:
-            src = batch["src"].to(device) 
-            tgt = batch["tgt"].to(device)   
+    batch_size = src.size(0)
+    src_mask = model.create_src_mask(src)
+    encode_out = model.encoder(src, src_mask)
+    pred = torch.full((batch_size, 1), tgt_bos_idx, dtype=torch.long, device=device)
+    
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+    all_logits = []
+    min_len = _get_min_lengths(tgt_output, tgt_eos_idx)
 
-            tgt_output = tgt[:, 1:] 
+    for step in range(max_len - 1):
+        if torch.all(finished):
+            break
+        
+        tgt_mask = model.create_tgt_mask(pred)
+        decode_out = model.decoder(pred, encode_out, src_mask, tgt_mask)
 
-            min_lens = _get_min_lengths(tgt_output, tgt_eos_idx)
+        logits = decode_out[:, -1, :]
+        all_logits.append(logits)
 
-            src_mask = model.create_src_mask(src)
-            encode_out = model.encoder(src, src_mask)
+        # Mask EOS tokens for sequences below min length
+        current_len = torch.full((batch_size,), step + 1, device=device)
+        mask = (current_len < min_len)
+        masked_logits = logits.clone()
+        masked_logits[mask, tgt_eos_idx] = float('-inf')
+        
+        next_token = masked_logits.argmax(dim=-1, keepdim=True)
+        pred = torch.cat([pred, next_token], dim=1)
 
-            batch_size = src.size(0)
-            generated = torch.full((batch_size, 1),
-                                   tgt_bos_idx,
-                                   device=device,
-                                   dtype=torch.long)
+        newly_finished = next_token.squeeze(1) == tgt_eos_idx
+        finished = finished | newly_finished
 
-            for step in range(max_len):
-                tgt_mask = model.create_tgt_mask(generated) 
-                decode_out = model.decoder(generated, encode_out, src_mask, tgt_mask)
+    if return_logits:
+        logits = torch.stack(all_logits, dim=1)
+        if logits.size(1) < max_len-1:
+            pad_size = (max_len-1) - logits.size(1)
+            logits = F.pad(logits, (0, 0, 0, pad_size))
+        else:
+            logits = logits[:, :(max_len-1), :]
+        return logits
+    return pred
+            
 
-                logits = decode_out[:, -1, :]
-
-                mask = (step < min_lens)  
-                logits[mask, tgt_eos_idx] = float('-inf')
-
-                next_token = logits.argmax(dim=-1, keepdim=True) 
-                generated = torch.cat([generated, next_token], dim=1)
-
-            all_preds.extend(generated.cpu().numpy().tolist())
-            all_targets.extend(tgt_output.cpu().numpy().tolist())
-
-    return process_predictions(all_preds, all_targets, tgt_eos_idx, tgt_pad_idx)
 
 def _get_min_lengths(tgt_output, eos_idx):
     min_lens = []
@@ -206,47 +269,6 @@ def _get_min_lengths(tgt_output, eos_idx):
             min_len = seq.size(0)
         min_lens.append(min_len)
     return torch.tensor(min_lens, device=tgt_output.device)
-
-def process_predictions(all_preds, all_targets, tgt_eos_idx, tgt_pad_idx):
-    if isinstance(all_preds, torch.Tensor):
-        all_preds = all_preds.cpu().tolist()
-    if isinstance(all_targets, torch.Tensor):
-        all_targets = all_targets.cpu().tolist()
-
-    flat_preds = []
-    flat_targets = []
-    length_matches = []
-
-    for i in range(len(all_preds)):
-        pred_seq = all_preds[i]
-        target_seq = all_targets[i]
-
-        if tgt_eos_idx in pred_seq:
-            pred_eos_idx = pred_seq.index(tgt_eos_idx) + 1
-        else:
-            pred_eos_idx = len(pred_seq)
-        
-        if tgt_eos_idx in target_seq:
-            target_eos_idx = target_seq.index(tgt_eos_idx) + 1
-        else:
-            target_eos_idx = len(target_seq)
-
-        pred_seq = pred_seq[:pred_eos_idx]
-        target_seq = target_seq[:target_eos_idx]
-
-        length_matches.append(int(len(pred_seq) == len(target_seq)))
-
-        max_len = max(len(pred_seq), len(target_seq))
-        pred_seq.extend([tgt_pad_idx] * (max_len - len(pred_seq)))
-        target_seq.extend([tgt_pad_idx] * (max_len - len(target_seq)))
-
-        flat_preds.extend(pred_seq)
-        flat_targets.extend(target_seq)
-    
-    seq_len_acc = sum(length_matches) / len(length_matches) if length_matches else 0.0
-
-    token_accuracy = accuracy_score(flat_targets, flat_preds)
-    return token_accuracy, seq_len_acc
 
 
 def get_dataset_pairs():
@@ -261,7 +283,7 @@ def get_dataset_pairs():
     return pairs
 
 
-def main(train_path, test_path, model_suffix, random_seed=42):
+def main(train_path, test_path, model_suffix, random_seed=42, oracle=False):
     """Modified main function accepting dataset paths and random seed"""
     # Set seeds at the start of main
     torch.manual_seed(random_seed)
@@ -306,34 +328,32 @@ def main(train_path, test_path, model_suffix, random_seed=42):
 
     best_accuracy = 0.0
     for epoch in range(EPOCHS):
-        train_loss = train_epoch_mix(model, train_loader, optimizer, criterion, DEVICE)
-        test_loss = evaluate_teacher_forcing(model, test_loader, criterion, DEVICE)
-        for batch in test_loader:
-            src = batch["src"].to(DEVICE)
-            tgt = batch["tgt"].to(DEVICE)
-            break
-        pred = greedy_decode(model, src, tgt, test_dataset, DEVICE)
-        accuracy, seq_acc = process_predictions(pred, tgt[:, 1:], test_dataset.tgt_vocab.tok2id["<EOS>"], test_dataset.tgt_vocab.tok2id["<PAD>"])
+        train_loss = train_epoch_teacher_forcing(model, train_loader, optimizer, criterion, DEVICE)
+        test_loss, accuracy, seq_acc = evaluate_teacher_forcing(model, test_loader, criterion, DEVICE)
+        g_test_loss, g_accuracy, g_seq_acc = evaluate_greedy_search(model, test_loader, criterion, DEVICE)
+        if oracle:
+            go_test_loss, go_accuracy, go_seq_acc = evaluate_oracle_greedy_search(model, test_loader, criterion, DEVICE)
 
-        # fixed_accuracy, fixed_seq_acc = constrained_greedy_search(
-        #     model, test_loader, test_dataset, DEVICE
-        # )
 
         print(f"Dataset p{model_suffix} - Epoch: {epoch+1}")
         print(f"Train Loss: {train_loss:.4f}")
         print(f"Test Loss: {test_loss:.4f}")
-        print(f"Accuracy: {accuracy:.4f}\nSequence Length Accuracy: {seq_acc:.4f}")
-        # print(f"Fixed Length Accuracy: {fixed_accuracy:.4f}\nSequence Length Accuracy: {fixed_seq_acc:.4f}")
-
-        if accuracy > best_accuracy:
-            best_accuracy = accuracy
+        print(f"Greedy Search Loss: {g_test_loss:.4f}")
+        print(f"Accuracy: {accuracy:.4f}, Sequence Length Accuracy: {seq_acc:.4f}")
+        print(f"Greedy Search Accuracy: {g_accuracy:.4f}, Sequence Length Accuracy: {g_seq_acc:.4f}")
+        if oracle:
+            print(f"Oracle Greedy Search Loss: {go_test_loss:.4f}")
+            print(f"Oracle Greedy Search Accuracy: {go_accuracy:.4f}, Sequence Length Accuracy: {go_seq_acc:.4f}")
+        
+        if g_accuracy > best_accuracy:
+            best_accuracy = g_accuracy
             print(f"New best accuracy: {best_accuracy:.4f}")
             torch.save(
                 {
                     "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "accuracy": accuracy,
+                    "accuracy": g_accuracy,
                 },
                 f"model/best_model_p{model_suffix}.pt",
             )
@@ -379,4 +399,4 @@ def run_all_variations():
         print(f"Individual runs: {', '.join(f'{acc:.4f}' for acc in accuracies)}\n")
 
 if __name__ == "__main__":
-    run_all_variations()
+    main("data/length_split/tasks_train_length.txt", "data/length_split/tasks_test_length.txt", "length", oracle=True)
