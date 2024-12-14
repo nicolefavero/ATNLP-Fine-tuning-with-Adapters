@@ -1,6 +1,7 @@
-# Group Reimplementation Project: Transformer-Based SCAN Task
+# ATNLP-Project: Transformer-Based SCAN Task
 
-This repository is a reimplementation of experiments from the paper [*Generalization without Systematicity: On the Compositional Skills of Sequence-to-Sequence Recurrent Networks*](https://arxiv.org/abs/1711.00350) by Brendan Lake and Marco Baroni. Instead of using RNNs, GRUs, or LSTMs as in the original paper, we implement a Transformer-based model to replicate and analyze the results of Experiments 1, 2, and 3.
+This repository is a reimplementation of experiments from the paper [*Generalization without Systematicity: On the Compositional Skills of Sequence-to-Sequence Recurrent Networks*](https://arxiv.org/abs/1711.00350) by Brendan Lake and Marco Baroni. Instead of using RNNs, GRUs, or LSTMs as in the original paper, we implement a Transformer-based model inspired by the architecture proposed in the groundbreaking paper [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) by Vaswani et al. 
+
 
 ## Introduction
 The goal of this project is to evaluate the compositional generalization capabilities of Transformer models on the SCAN dataset. SCAN is a synthetic dataset that pairs commands (e.g., "walk twice and jump") with corresponding actions (e.g., "WALK WALK JUMP"). We test the ability of our model to generalize across three key splits:
@@ -9,6 +10,8 @@ The goal of this project is to evaluate the compositional generalization capabil
 - **Experiment 3**: Compositional split.
 
 This project is designed for educational purposes.
+
+The Transformer model used in this repository follows the original implementation from the seminal [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) paper by Vaswani et al., incorporating multi-head self-attention, positional encodings, and feed-forward layers.
 
 
 ## Dependencies
@@ -47,8 +50,8 @@ The dataset is tokenized, and both source (commands) and target (actions) vocabu
 ## Usage
 1. **Clone the repository**:
     ```bash
-    git clone https://github.com/your-repo-name
-    cd your-repo-name
+    git clone https://github.com/frasalute/ATNLP-Project.git
+    cd ATNLP-Project
     ```
 
 2. **Download the SCAN dataset**:
@@ -99,7 +102,6 @@ Greedy Search Loss: 0.3456
 Accuracy: 92.34%, Sequence Accuracy: 85.67%
 ```
 
-
 ## Results
 We aim to reproduce and compare the following key findings:
 - Performance of Transformers across dataset splits and sizes.
@@ -109,4 +111,4 @@ You can use the `run_all_variations()` function in `train.py` to evaluate the mo
 
 
 ## Acknowledgments
-This project is inspired by the experiments conducted in [Lake & Baroni, 2017](https://arxiv.org/abs/1711.00350). We thank [Transformer-SCAN](https://github.com/jlrussin/transformer_scan) for providing preprocessed SCAN datasets and code references.
+This project is inspired by the experiments conducted in [Lake & Baroni, 2017](https://arxiv.org/abs/1711.00350). We thank [Transformer-SCAN](https://github.com/jlrussin/transformer_scan) for providing preprocessed SCAN datasets and code references. The Transformer model architecture is adapted from the foundational paper [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) by Vaswani et al.
