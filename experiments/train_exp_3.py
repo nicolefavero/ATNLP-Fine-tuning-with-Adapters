@@ -1,5 +1,6 @@
 import numpy as np
 from train import main
+import torch
 
 
 def get_add_prim_dataset_pairs():
@@ -40,6 +41,18 @@ def run_experiment_3(n_runs=1):
     n_runs = n_runs
     results = {}
 
+    hyperparams = {
+        "emb_dim": 128,
+        "n_layers": 2,
+        "n_heads": 8,
+        "forward_dim": 256,
+        "dropout": 0.15,
+        "learning_rate": 2e-4,
+        "batch_size": 16,
+        "epochs": 6,
+        "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+    }
+
     # Fetch dataset pairs
     pairs = get_add_prim_dataset_pairs()
 
@@ -55,7 +68,7 @@ def run_experiment_3(n_runs=1):
 
             # Call the existing `main` function with hyperparameters
             _, accuracy = main(
-                train_path, test_path, size, random_seed=seed, oracle=False
+                train_path, test_path, size, hyperparams, random_seed=seed, oracle=False
             )
             results[size].append(accuracy)
             print(f"Run {run+1} Accuracy for {size}: {accuracy:.4f}")
@@ -67,6 +80,7 @@ def run_experiment_3(n_runs=1):
     print("-" * 50)
 
     for size, accuracies in results.items():
+        accuracies = [acc.cpu().numpy() if torch.is_tensor(acc) else acc for acc in accuracies]
         mean = np.mean(accuracies)
         std = np.std(accuracies)
         print(f"{size:11} | {mean:.4f} ± {std:.4f}")

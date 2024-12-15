@@ -9,6 +9,7 @@ import numpy as np
 from torchmetrics import Accuracy
 from utils.utils import SequenceAccuracy, greedy_decode, oracle_greedy_search
 from typing import Tuple, Callable
+from torch.utils.tensorboard import SummaryWriter
 
 GRAD_CLIP = 1
 
@@ -358,6 +359,7 @@ def main(
 
     criterion = nn.CrossEntropyLoss(ignore_index=dataset.tgt_vocab.tok2id["<PAD>"])
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    writer = SummaryWriter(log_dir=f"runs/{model_suffix}")
 
     best_accuracy = 0.0
     for epoch in range(EPOCHS):
@@ -372,6 +374,16 @@ def main(
             go_test_loss, go_accuracy, go_seq_acc = evaluate_oracle_greedy_search(
                 model, test_loader, criterion, DEVICE
             )
+
+        writer.add_scalar('Loss/Train', train_loss, epoch)
+        writer.add_scalar('Loss/Test', test_loss, epoch)
+        writer.add_scalar('Accuracy/Test_Token', accuracy, epoch)
+        writer.add_scalar('Accuracy/Test_Sequence', seq_acc, epoch)
+        writer.add_scalar('Accuracy/Greedy_Token', g_accuracy, epoch)
+        writer.add_scalar('Accuracy/Greedy_Sequence', g_seq_acc, epoch)
+        if oracle:
+            writer.add_scalar('Accuracy/Oracle_Greedy_Token', go_accuracy, epoch)
+            writer.add_scalar('Accuracy/Oracle_Greedy_Sequence', go_seq_acc, epoch)
 
         print(f"Dataset {model_suffix} - Epoch: {epoch+1}")
         print(f"Train Loss: {train_loss:.4f}")
@@ -402,6 +414,7 @@ def main(
 
         print("-" * 50)
 
+    writer.close()
     print(f"Training completed for p{model_suffix}. Best accuracy: {best_accuracy:.4f}")
 
     return model, best_accuracy

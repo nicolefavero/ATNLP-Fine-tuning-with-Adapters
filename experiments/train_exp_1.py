@@ -55,6 +55,7 @@ def run_all_variations(n_runs=5):
     print("-" * 50)
 
     for size, accuracies in results.items():
+        accuracies = [acc.cpu().numpy() if torch.is_tensor(acc) else acc for acc in accuracies]
         mean = np.mean(accuracies)
         std = np.std(accuracies)
         print(f"{size:11} | {mean:.4f} ± {std:.4f}")
