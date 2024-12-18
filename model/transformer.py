@@ -39,14 +39,14 @@ class MultiHeadAttention(nn.Module):
         key = self._split_heads(key)
         value = self._split_heads(value)
 
-        key_out = query @ key.transpose(-2, -1)
+        attn_score = query @ key.transpose(-1, -2)
 
         if mask is not None:
-            key_out = key_out.masked_fill(mask == 0, -1e20)
+            attn_score = attn_score.masked_fill(mask == 0, float("-inf"))
 
-        key_out = torch.softmax(key_out / self.head_dim**0.5, dim=-1)
+        attn_weight = torch.softmax(attn_score / self.head_dim**0.5, dim=-1)
 
-        attn = key_out @ value
+        attn = attn_weight @ value
 
         attn = self._merge_heads(attn)
 
@@ -145,9 +145,9 @@ class Encoder(nn.Module):
         embedding = self.dropout(embedding)
 
         for block in self.transformer_blocks:
-            output = block(embedding, embedding, embedding, mask)
+            embedding = block(embedding, embedding, embedding, mask)
 
-        return output
+        return embedding
 
 
 class DecoderBlock(nn.Module):
@@ -165,11 +165,13 @@ class DecoderBlock(nn.Module):
         )
 
     def forward(self, x, value, key, src_mask, tgt_mask):
+        # Self Attention
         attn = self.attn(x, x, x, tgt_mask)
         attn = attn + x
         attn = self.dropout(attn)
         attn = self.norm(attn)
 
+        # Cross Attention
         output = self.transformer_block(attn, value, key, src_mask)
 
         return output
@@ -210,9 +212,9 @@ class Decoder(nn.Module):
         embedding = tok_emb + pos_emb
 
         for block in self.decoder_blocks:
-            output = block(embedding, encoder_out, encoder_out, src_mask, tgt_mask)
+            embedding = block(embedding, encoder_out, encoder_out, src_mask, tgt_mask)
 
-        output = self.out_layer(output)
+        output = self.out_layer(embedding)
 
         return output
 
