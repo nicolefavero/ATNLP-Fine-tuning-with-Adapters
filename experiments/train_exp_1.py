@@ -1,4 +1,4 @@
-from train import main
+from train import main, train_epoch_mixup
 
 import torch
 import numpy as np
@@ -16,7 +16,7 @@ def get_dataset_pairs():
     return pairs
 
 
-def run_all_variations(n_runs=5):
+def run_all_variations(n_runs=1):
     """Run training 5 times for all dataset size variations with different seeds"""
     n_runs = n_runs
     results = {}
@@ -44,10 +44,10 @@ def run_all_variations(n_runs=5):
 
         for train_path, test_path, size in get_dataset_pairs():
             print(f"\nTraining dataset size p{size}")
-            _, accuracy = main(
-                train_path, test_path, f"p_{size}", hyperparams, random_seed=seed
+            _, accuracy, g_accuracy = main(
+                train_path, test_path, f"p_{size}", hyperparams, random_seed=seed, train_fn=train_epoch_mixup
             )
-            results[f"p{size}"].append(accuracy)
+            results[f"p{size}"].append((accuracy, g_accuracy))
 
     print("\nFinal Results Summary:")
     print("=" * 50)
@@ -55,12 +55,16 @@ def run_all_variations(n_runs=5):
     print("-" * 50)
 
     for size, accuracies in results.items():
-        accuracies = [acc.cpu().numpy() if torch.is_tensor(acc) else acc for acc in accuracies]
-        mean = np.mean(accuracies)
-        std = np.std(accuracies)
-        print(f"{size:11} | {mean:.4f} ± {std:.4f}")
+        accuracies = [(acc.cpu().numpy() if torch.is_tensor(acc) else acc,
+                   g_acc.cpu().numpy() if torch.is_tensor(g_acc) else g_acc) 
+                  for acc, g_acc in accuracies]
+        mean = np.mean(accuracies, axis=0)
+        std = np.std(accuracies, axis=0)
+        print(f"{size:11} | Mean Accuracy: {mean[0]:.4f} ± {std[0]:.4f}")
+        print(f"Individual runs: {', '.join(f'{acc[0]:.4f}' for acc in accuracies)}")
+        print(f"Mean Greedy Accuracy: {mean[1]:.4f} ± {std[1]:.4f}")
+        print(f"Individual runs: {', '.join(f'{acc[1]:.4f}' for acc in accuracies)}\n")
 
-        print(f"Individual runs: {', '.join(f'{acc:.4f}' for acc in accuracies)}\n")
 
 
 if __name__ == "__main__":

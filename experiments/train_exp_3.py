@@ -24,7 +24,7 @@ def get_add_prim_dataset_pairs():
     additional_base_path = "data/add_prim_split/with_additional_examples"
     num_composed_commands = ["num1", "num2", "num4", "num8", "num16", "num32"]
     for num in num_composed_commands:
-        for rep in range(1, 6):  # Assuming 5 repetitions for each split
+        for rep in range(1, 2):  # Assuming 5 repetitions for each split
             train_path = f"{additional_base_path}/tasks_train_addprim_complex_jump_{num}_rep{rep}.txt"
             test_path = f"{additional_base_path}/tasks_test_addprim_complex_jump_{num}_rep{rep}.txt"
             pairs.append((train_path, test_path, f"{num}_rep{rep}"))
@@ -49,7 +49,7 @@ def run_experiment_3(n_runs=1):
         "dropout": 0.15,
         "learning_rate": 2e-4,
         "batch_size": 16,
-        "epochs": 6,
+        "epochs": 20,
         "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     }
 
@@ -67,11 +67,11 @@ def run_experiment_3(n_runs=1):
             print(f"Run {run+1}/{n_runs} with seed {seed}")
 
             # Call the existing `main` function with hyperparameters
-            _, accuracy = main(
+            _, accuracy, g_accuracy = main(
                 train_path, test_path, size, hyperparams, random_seed=seed, oracle=False
             )
-            results[size].append(accuracy)
-            print(f"Run {run+1} Accuracy for {size}: {accuracy:.4f}")
+            results[size].append((accuracy, g_accuracy))
+            print(f"Run {run+1} Accuracy: {accuracy:.4f}, Greedy Accuracy: {g_accuracy:.4f}")
 
     # Print summary of results
     print("\nFinal Results Summary:")
@@ -80,11 +80,15 @@ def run_experiment_3(n_runs=1):
     print("-" * 50)
 
     for size, accuracies in results.items():
-        accuracies = [acc.cpu().numpy() if torch.is_tensor(acc) else acc for acc in accuracies]
-        mean = np.mean(accuracies)
-        std = np.std(accuracies)
-        print(f"{size:11} | {mean:.4f} ± {std:.4f}")
-        print(f"Individual runs: {', '.join(f'{acc:.4f}' for acc in accuracies)}")
+        accuracies = [(acc.cpu().numpy() if torch.is_tensor(acc) else acc,
+                   g_acc.cpu().numpy() if torch.is_tensor(g_acc) else g_acc) 
+                  for acc, g_acc in accuracies]
+        mean = np.mean(accuracies, axis=0)
+        std = np.std(accuracies, axis=0)
+        print(f"{size:11} | Mean Accuracy: {mean[0]:.4f} ± {std[0]:.4f}")
+        print(f"Individual runs: {', '.join(f'{acc[0]:.4f}' for acc in accuracies)}")
+        print(f"Mean Greedy Accuracy: {mean[1]:.4f} ± {std[1]:.4f}")
+        print(f"Individual runs: {', '.join(f'{acc[1]:.4f}' for acc in accuracies)}\n")
         print("-" * 50)
 
 

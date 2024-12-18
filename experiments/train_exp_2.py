@@ -23,6 +23,9 @@ def run_experiment():
 
     # Run training with Mixup augmentation
     _, accuracy = main(
-        train_path, test_path, size, hyperparams, train_fn=train_epoch_mixup
+        train_path, test_path, size, hyperparams, oracle=True, train_fn=train_epoch_mixup
     )
     print(f"Accuracy: {accuracy:.4f}")
+
+if __name__ == "__main__":
+    run_experiment()

@@ -10,6 +10,7 @@ from torchmetrics import Accuracy
 from utils.utils import SequenceAccuracy, greedy_decode, oracle_greedy_search
 from typing import Tuple, Callable
 from torch.utils.tensorboard import SummaryWriter
+torch.set_float32_matmul_precision('high')
 
 GRAD_CLIP = 1
 
@@ -361,15 +362,17 @@ def main(
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     writer = SummaryWriter(log_dir=f"runs/{model_suffix}")
 
+    model.compile(mode="reduce-overhead", fullgraph=True)
+
     best_accuracy = 0.0
     for epoch in range(EPOCHS):
         train_loss = train_fn(model, train_loader, optimizer, criterion, DEVICE)
         test_loss, accuracy, seq_acc = evaluate_teacher_forcing(
             model, test_loader, criterion, DEVICE
         )
-        g_test_loss, g_accuracy, g_seq_acc = evaluate_greedy_search(
-            model, test_loader, criterion, DEVICE
-        )
+        # g_test_loss, g_accuracy, g_seq_acc = evaluate_greedy_search(
+        #     model, test_loader, criterion, DEVICE
+        # )
         if oracle:
             go_test_loss, go_accuracy, go_seq_acc = evaluate_oracle_greedy_search(
                 model, test_loader, criterion, DEVICE
@@ -379,8 +382,8 @@ def main(
         writer.add_scalar('Loss/Test', test_loss, epoch)
         writer.add_scalar('Accuracy/Test_Token', accuracy, epoch)
         writer.add_scalar('Accuracy/Test_Sequence', seq_acc, epoch)
-        writer.add_scalar('Accuracy/Greedy_Token', g_accuracy, epoch)
-        writer.add_scalar('Accuracy/Greedy_Sequence', g_seq_acc, epoch)
+        # writer.add_scalar('Accuracy/Greedy_Token', g_accuracy, epoch)
+        # writer.add_scalar('Accuracy/Greedy_Sequence', g_seq_acc, epoch)
         if oracle:
             writer.add_scalar('Accuracy/Oracle_Greedy_Token', go_accuracy, epoch)
             writer.add_scalar('Accuracy/Oracle_Greedy_Sequence', go_seq_acc, epoch)
@@ -388,26 +391,26 @@ def main(
         print(f"Dataset {model_suffix} - Epoch: {epoch+1}")
         print(f"Train Loss: {train_loss:.4f}")
         print(f"Test Loss: {test_loss:.4f}")
-        print(f"Greedy Search Loss: {g_test_loss:.4f}")
+        # print(f"Greedy Search Loss: {g_test_loss:.4f}")
         print(f"Accuracy: {accuracy:.4f}, Sequence Length Accuracy: {seq_acc:.4f}")
-        print(
-            f"Greedy Search Accuracy: {g_accuracy:.4f}, Sequence Length Accuracy: {g_seq_acc:.4f}"
-        )
+        # print(
+        #     f"Greedy Search Accuracy: {g_accuracy:.4f}, Sequence Length Accuracy: {g_seq_acc:.4f}"
+        # )
         if oracle:
             print(f"Oracle Greedy Search Loss: {go_test_loss:.4f}")
             print(
                 f"Oracle Greedy Search Accuracy: {go_accuracy:.4f}, Sequence Length Accuracy: {go_seq_acc:.4f}"
             )
 
-        if g_accuracy > best_accuracy:
-            best_accuracy = g_accuracy
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
             print(f"New best accuracy: {best_accuracy:.4f}")
             torch.save(
                 {
                     "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "accuracy": g_accuracy,
+                    "accuracy": accuracy,
                 },
                 f"model/best_model_{model_suffix}.pt",
             )
@@ -417,4 +420,12 @@ def main(
     writer.close()
     print(f"Training completed for p{model_suffix}. Best accuracy: {best_accuracy:.4f}")
 
-    return model, best_accuracy
+    # Load the best model
+    checkpoint = torch.load(f"model/best_model_{model_suffix}.pt")
+    model.load_state_dict(checkpoint["model_state_dict"])
+
+    # Evaluate the best model on greedy search
+    _, g_accuracy, seq_acc = evaluate_greedy_search(model, test_loader, criterion, DEVICE)
+    print(f"Greedy Search Evaluation - Accuracy: {g_accuracy:.4f}, Sequence Length Accuracy: {seq_acc:.4f}")
+
+    return model, best_accuracy, g_accuracy
