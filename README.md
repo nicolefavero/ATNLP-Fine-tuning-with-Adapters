@@ -15,20 +15,21 @@ The Transformer model used in this repository follows the implementation done by
 
 
 ## Dependencies
-The project is implemented in Python using PyTorch. Ensure you have the following dependencies installed:
-- Python 3.8+
-- PyTorch 1.13+
-- TorchMetrics
-- scikit-learn
-- tqdm
-- numpy
+The project is implemented in Python using PyTorch. To get started use Poetry to install the needed packages.
+```bash
+pip install poetry
+
+poetry install
+```
 
 
 ## Code Structure
 This repository contains the following components:
 - **`dataset.py`**: A custom data loader for the SCAN dataset, including vocabulary creation and text-token transformations.
 - **`model/transformer.py`**: An implementation of a Transformer-based sequence-to-sequence model, including multi-head attention, positional encodings, encoder-decoder layers, and mask generation.
-- **`train.py`**: The training and evaluation script for the model, including teacher forcing, greedy search, and oracle decoding.
+- **`train.py`**: The training and evaluation script for the model.
+- **`utils/utils.py`**: Greedy and Greedy Oracale decoding.
+- **`experiments/`**: Training scripts for any of the experiments.
 - **`data/`**: Directory for SCAN dataset files. Use the preprocessed dataset from [Transformer-SCAN](https://github.com/jlrussin/transformer_scan).
 - **`model/`**: Directory for saving trained model checkpoints.
 
@@ -69,22 +70,10 @@ The dataset is tokenized, and both source (commands) and target (actions) vocabu
     ```
 
 3. **Train the model**:
-    Use the `main` function in `train.py` to train on a specific dataset split. For example:
-    ```bash
-    python train.py
-    ```
-
-    Key parameters for training include:
-    - `train_path`: Path to training dataset.
-    - `test_path`: Path to testing dataset.
-    - `random_seed`: Random seed for reproducibility.
-    - `oracle`: Enable oracle decoding (default: False).
-
-4. **Evaluate the model**:
-    After training, the model evaluates performance using:
-    - Teacher forcing.
-    - Greedy search decoding.
-    - Oracle decoding (if enabled).
+    Use any of the training scripts in the `experiments/` directory to start training the model:
+```bash
+python -m experiments.train_exp_3
+```
 
 
 ## Evaluation
@@ -99,15 +88,13 @@ Dataset p16 - Epoch: 10
 Train Loss: 0.1234
 Test Loss: 0.4567
 Greedy Search Loss: 0.3456
-Accuracy: 92.34%, Sequence Accuracy: 85.67%
+Accuracy: 0.92, Sequence Accuracy: 0.53
 ```
 
 ## Results
 We aim to reproduce and compare the following key findings:
 - Performance of Transformers across dataset splits and sizes.
 - Ability of Transformers to generalize to longer or unseen command sequences.
-
-You can use the `run_all_variations()` function in `train.py` to evaluate the model on all dataset splits and sizes.
 
 
 ## Acknowledgments
