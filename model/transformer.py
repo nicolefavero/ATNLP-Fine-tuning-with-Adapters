@@ -42,7 +42,7 @@ class MultiHeadAttention(nn.Module):
         attn_score = query @ key.transpose(-1, -2)
 
         if mask is not None:
-            attn_score = attn_score.masked_fill(mask == 0, float("-inf"))
+            attn_score = attn_score.masked_fill(mask == 0, 1e-20)
 
         attn_weight = torch.softmax(attn_score / self.head_dim**0.5, dim=-1)
 
