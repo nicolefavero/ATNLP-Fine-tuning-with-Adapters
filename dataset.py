@@ -20,8 +20,9 @@ class SCANDataset(Dataset):
         self.file_path = file_path 
         self.max_len = max_len
         self.data = self._load_data()
-        self.src_vocab = Vocabulary([d["command"] for d in self.data])
-        self.tgt_vocab = Vocabulary([d["action"] for d in self.data])
+        # Create consolidated vocabulary from both commands and actions
+        all_text = [d["command"] for d in self.data] + [d["action"] for d in self.data]
+        self.vocab = Vocabulary(all_text)
 
     def _load_data(self): 
         data = [] 
@@ -54,17 +55,16 @@ class SCANDataset(Dataset):
     def __getitem__(self, idx): 
         src_text = self.data[idx]["command"]
         tgt_text = self.data[idx]["action"]
-        src_tokens = self.encode(src_text, self.src_vocab)
-        tgt_tokens = self.encode(tgt_text, self.tgt_vocab)
+        src_tokens = self.encode(src_text, self.vocab)
+        tgt_tokens = self.encode(tgt_text, self.vocab)
         return {"src": torch.tensor(src_tokens), "tgt": torch.tensor(tgt_tokens)}
 
 
 if __name__ == "__main__": 
-    dataset = SCANDataset("tasks.txt")
+    dataset = SCANDataset("data/simple_split/tasks_train_simple.txt")
     print(dataset[0])
     print(dataset[0]["src"])
     print(dataset[0]["tgt"])
-    print(dataset.src_vocab.vocab_size)
-    print(dataset.tgt_vocab.vocab_size)
-    print(dataset.decode(dataset[0]["src"], dataset.src_vocab))
-    print(dataset.decode(dataset[0]["tgt"], dataset.tgt_vocab))
+    print(dataset.vocab.vocab_size)  # Now only print once for shared vocab
+    print(dataset.decode(dataset[0]["src"], dataset.vocab))
+    print(dataset.decode(dataset[0]["tgt"], dataset.vocab))

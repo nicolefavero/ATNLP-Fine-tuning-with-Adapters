@@ -42,7 +42,7 @@ class MultiHeadAttention(nn.Module):
         attn_score = query @ key.transpose(-1, -2)
 
         if mask is not None:
-            attn_score = attn_score.masked_fill(mask == 0, 1e-20)
+            attn_score = attn_score.masked_fill(mask == 0, float('-inf'))
 
         attn_weight = torch.softmax(attn_score / self.head_dim**0.5, dim=-1)
 
@@ -125,9 +125,9 @@ class Encoder(nn.Module):
         self.max_len = max_len
 
         pos_weight = get_sinusoid_table(max_len + 1, emb_dim)
-        self.tok_emb = nn.Embedding(vocab_size, emb_dim, _freeze=True)
-        self.pos_emb = nn.Embedding(max_len, emb_dim, _freeze=True).from_pretrained(
-            pos_weight
+        self.tok_emb = nn.Embedding(vocab_size, emb_dim)
+        self.pos_emb = nn.Embedding(max_len, emb_dim).from_pretrained(
+            pos_weight, freeze=True
         )
 
         self.transformer_blocks = nn.ModuleList(
@@ -141,7 +141,7 @@ class Encoder(nn.Module):
         seq_len = x.size(1)
         tok_emb = self.tok_emb(x).to(device=x.device)
         pos_emb = self.pos_emb(torch.arange(1, seq_len + 1, device=x.device))
-        embedding = tok_emb + pos_emb.unsqueeze(0)
+        embedding = tok_emb + pos_emb.unsqueeze(0).repeat(x.size(0), 1, 1)
         embedding = self.dropout(embedding)
 
         for block in self.transformer_blocks:
@@ -172,7 +172,7 @@ class DecoderBlock(nn.Module):
         attn = self.norm(attn)
 
         # Cross Attention
-        output = self.transformer_block(attn, value, key, src_mask)
+        output = self.transformer_block(attn, key, value, src_mask)
 
         return output
 
@@ -190,7 +190,7 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.max_len = max_len
 
-        self.tok_emb = nn.Embedding(vocab_size, emb_dim, _freeze=True)
+        self.tok_emb = nn.Embedding(vocab_size, emb_dim)
         self.pos_emb = nn.Embedding(max_len, emb_dim)
         self.decoder_blocks = nn.ModuleList(
             [
