@@ -147,13 +147,13 @@ def evaluate_greedy_search(
     model.eval()
     total_loss = 0
 
-    tgt_eos_idx = dataloader.dataset.tgt_vocab.tok2id["<EOS>"]
-    tgt_bos_idx = dataloader.dataset.tgt_vocab.tok2id["<BOS>"]
-    tgt_pad_idx = dataloader.dataset.tgt_vocab.tok2id["<PAD>"]
+    tgt_eos_idx = dataloader.dataset.vocab.tok2id["<EOS>"]
+    tgt_bos_idx = dataloader.dataset.vocab.tok2id["<BOS>"]
+    tgt_pad_idx = dataloader.dataset.vocab.tok2id["<PAD>"]
     accuracy = Accuracy(
         ignore_index=tgt_pad_idx,
         task="multiclass",
-        num_classes=dataloader.dataset.tgt_vocab.vocab_size,
+        num_classes=dataloader.dataset.vocab.vocab_size,
     ).to(device)
     seq_accuracy = SequenceAccuracy(
         tgt_pad_idx=tgt_pad_idx, tgt_eos_idx=tgt_eos_idx
@@ -202,12 +202,12 @@ def evaluate_teacher_forcing(
     model.eval()
     total_loss = 0
 
-    tgt_pad_idx = dataloader.dataset.tgt_vocab.tok2id["<PAD>"]
-    tgt_eos_idx = dataloader.dataset.tgt_vocab.tok2id["<EOS>"]
+    tgt_pad_idx = dataloader.dataset.vocab.tok2id["<PAD>"]
+    tgt_eos_idx = dataloader.dataset.vocab.tok2id["<EOS>"]
     accuracy = Accuracy(
         ignore_index=tgt_pad_idx,
         task="multiclass",
-        num_classes=dataloader.dataset.tgt_vocab.vocab_size,
+        num_classes=dataloader.dataset.vocab.vocab_size,
     ).to(device)
     seq_accuracy = SequenceAccuracy(
         tgt_pad_idx=tgt_pad_idx, tgt_eos_idx=tgt_eos_idx
@@ -256,13 +256,13 @@ def evaluate_oracle_greedy_search(
     model.eval()
     total_loss = 0
 
-    tgt_eos_idx = dataloader.dataset.tgt_vocab.tok2id["<EOS>"]
-    tgt_bos_idx = dataloader.dataset.tgt_vocab.tok2id["<BOS>"]
-    tgt_pad_idx = dataloader.dataset.tgt_vocab.tok2id["<PAD>"]
+    tgt_eos_idx = dataloader.dataset.vocab.tok2id["<EOS>"]
+    tgt_bos_idx = dataloader.dataset.vocab.tok2id["<BOS>"]
+    tgt_pad_idx = dataloader.dataset.vocab.tok2id["<PAD>"]
     accuracy = Accuracy(
         ignore_index=tgt_pad_idx,
         task="multiclass",
-        num_classes=dataloader.dataset.tgt_vocab.vocab_size,
+        num_classes=dataloader.dataset.vocab.vocab_size,
     ).to(device)
     seq_accuracy = SequenceAccuracy(
         tgt_pad_idx=tgt_pad_idx, tgt_eos_idx=tgt_eos_idx
@@ -346,10 +346,10 @@ def main(
     )
 
     model = Transformer(
-        src_vocab_size=dataset.src_vocab.vocab_size,
-        tgt_vocab_size=dataset.tgt_vocab.vocab_size,
-        src_pad_idx=dataset.src_vocab.tok2id["<PAD>"],
-        tgt_pad_idx=dataset.tgt_vocab.tok2id["<PAD>"],
+        src_vocab_size=dataset.vocab.vocab_size,
+        tgt_vocab_size=dataset.vocab.vocab_size,
+        src_pad_idx=dataset.vocab.tok2id["<PAD>"],
+        tgt_pad_idx=dataset.vocab.tok2id["<PAD>"],
         emb_dim=EMB_DIM,
         num_layers=N_LAYERS,
         num_heads=N_HEADS,
@@ -358,11 +358,9 @@ def main(
         max_len=dataset.max_len,
     ).to(DEVICE)
 
-    criterion = nn.CrossEntropyLoss(ignore_index=dataset.tgt_vocab.tok2id["<PAD>"])
+    criterion = nn.CrossEntropyLoss(ignore_index=dataset.vocab.tok2id["<PAD>"])
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     writer = SummaryWriter(log_dir=f"runs/{model_suffix}")
-
-    model.compile(mode="reduce-overhead", fullgraph=True)
 
     best_accuracy = 0.0
     for epoch in range(EPOCHS):

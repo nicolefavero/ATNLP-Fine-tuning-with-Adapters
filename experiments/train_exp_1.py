@@ -1,5 +1,5 @@
-from train import main, train_epoch_mixup
-
+from train import main
+from dataset import SCANDataset
 import torch
 import numpy as np
 
@@ -43,9 +43,16 @@ def run_all_variations(n_runs=1):
         print("=" * 70)
 
         for train_path, test_path, size in get_dataset_pairs():
+            dataset = SCANDataset(train_path)
+            data_len = dataset.__len__()
+            if (100000 // data_len) > 50:
+                hyperparams["epochs"] = 50
+            else:
+                hyperparams["epochs"] = min(20, (100000 // data_len))
+            del dataset
             print(f"\nTraining dataset size p{size}")
             _, accuracy, g_accuracy = main(
-                train_path, test_path, f"p_{size}", hyperparams, random_seed=seed, train_fn=train_epoch_mixup
+                train_path, test_path, f"p_{size}", hyperparams, random_seed=seed,
             )
             results[f"p{size}"].append((accuracy, g_accuracy))
 
