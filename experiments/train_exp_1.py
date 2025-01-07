@@ -2,6 +2,10 @@ from train import main
 from dataset import SCANDataset
 import torch
 import numpy as np
+from rich import print
+from rich.traceback import install
+
+install()
 
 
 def get_dataset_pairs():
@@ -16,7 +20,7 @@ def get_dataset_pairs():
     return pairs
 
 
-def run_all_variations(n_runs=1):
+def run_all_variations(n_runs=3):
     """Run training 5 times for all dataset size variations with different seeds"""
     n_runs = n_runs
     results = {}
@@ -43,13 +47,6 @@ def run_all_variations(n_runs=1):
         print("=" * 70)
 
         for train_path, test_path, size in get_dataset_pairs():
-            dataset = SCANDataset(train_path)
-            data_len = dataset.__len__()
-            if (100000 // data_len) > 50:
-                hyperparams["epochs"] = 50
-            else:
-                hyperparams["epochs"] = min(20, (100000 // data_len))
-            del dataset
             print(f"\nTraining dataset size p{size}")
             _, accuracy, g_accuracy = main(
                 train_path, test_path, f"p_{size}", hyperparams, random_seed=seed,

@@ -1,7 +1,10 @@
 import numpy as np
 from train import main
 import torch
+from rich import print
+from rich.traceback import install
 
+install()
 
 def get_add_prim_dataset_pairs():
     """Get pairs of training and test dataset paths for Experiment 3."""
@@ -32,7 +35,7 @@ def get_add_prim_dataset_pairs():
     return pairs
 
 
-def run_experiment_3(n_runs=1):
+def run_experiment_3(n_runs=3):
     """
     Run Experiment 3: Adding a new primitive and testing generalization to composed commands.
     This function trains and evaluates the Transformer model for each dataset variation

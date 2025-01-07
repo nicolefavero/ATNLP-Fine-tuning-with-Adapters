@@ -1,54 +1,37 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchmetrics import Metric
 
 
-class SequenceAccuracy(Metric):
-    def __init__(self, tgt_pad_idx: int = 0, tgt_eos_idx: int = 1) -> None:
-        """
-        Initializes the SequenceAccuracy metric.
+def calculate_accuracy(pred, target, pad_idx, eos_idx):
+    """
+    Calculate token and sequence accuracy, excluding padding tokens.
 
-        Args:
-            tgt_pad_idx: Index of the padding token in the target vocabulary.
-            tgt_eos_idx: Index of the end-of-sequence token in the target vocabulary.
-        """
-        super().__init__()
-        self.add_state("correct", default=torch.tensor(0), dist_reduce_fx="sum")
-        self.add_state("total", default=torch.tensor(0), dist_reduce_fx="sum")
-        self.tgt_pad_idx = tgt_pad_idx
-        self.tgt_eos_idx = tgt_eos_idx
+    Args:
+        pred: Predicted token indices tensor of shape (batch_size, seq_len).
+        target: Target token indices tensor of shape (batch_size, seq_len).
+        pad_idx: Index of the padding token in the vocabulary.
+        eos_idx: Index of the end-of-sequence token in the vocabulary.
 
-    def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
-        """
-        Updates the metric state with the predictions and targets.
+    Returns:
+        Tuple of token accuracy and sequence accuracy.
+    """
+    max_len = max(pred.size(1), target.size(1))
 
-        Args:
-            preds: Predicted sequences of shape (batch_size, seq_len).
-            target: Target sequences of shape (batch_size, seq_len).
-        """
-        tgt_eos_idx = self.tgt_eos_idx
-        tgt_pad_idx = self.tgt_pad_idx
-        batch_size = preds.size(0)
-        correct = torch.zeros(batch_size, dtype=torch.bool, device=preds.device)
-        for i in range(batch_size):
-            pred_seq = preds[i]
-            tgt_seq = target[i]
-            pred_seq = pred_seq[pred_seq != tgt_pad_idx]
-            if tgt_eos_idx in pred_seq:
-                pred_seq = pred_seq[
-                    : pred_seq.tolist().index(tgt_eos_idx) + 1
-                ]  # Remove tokens after <EOS>
-            tgt_seq = tgt_seq[tgt_seq != tgt_pad_idx]
-            if len(pred_seq) != len(tgt_seq):
-                continue
-            if torch.all(pred_seq == tgt_seq):
-                correct[i] = True
-        self.correct += correct.sum()
-        self.total += batch_size
+    if pred.size(1) < max_len:
+        pred = F.pad(pred, (0, max_len - pred.size(1)), value=pad_idx)
+    if target.size(1) < max_len:
+        target = F.pad(target, (0, max_len - target.size(1)), value=pad_idx)
 
-    def compute(self) -> torch.Tensor:
-        return self.correct.float() / self.total
+    # Token accuracy (excluding padding)
+    mask = target != pad_idx
+    correct = (pred == target) & mask
+    token_acc = correct.sum().float() / mask.sum().float() if mask.sum() > 0 else 0.0
+
+    mask = target == eos_idx
+    seq_acc = torch.all((pred == target) | ~mask, dim=1).float().mean()
+
+    return token_acc, seq_acc
 
 
 @torch.no_grad()
@@ -57,6 +40,7 @@ def greedy_decode(
     src: torch.Tensor,
     tgt_eos_idx: int,
     tgt_bos_idx: int,
+    tgt_pad_idx: int,
     device: torch.device,
     max_len: int = 128,
     return_logits: bool = False,
@@ -69,6 +53,7 @@ def greedy_decode(
         src: Source sequences tensor of shape (batch_size, src_seq_len).
         tgt_eos_idx: Index of the end-of-sequence token in the target vocabulary.
         tgt_bos_idx: Index of the beginning-of-sequence token in the target vocabulary.
+        tgt_pad_idx: Index of the padding token in the target vocabulary.
         device: Device to perform computations on.
         max_len: Maximum length of the generated sequences.
         return_logits: Whether to return the logits of each generated token.
@@ -89,9 +74,6 @@ def greedy_decode(
     all_logits = []
 
     for _ in range(max_len - 1):
-        if torch.all(finished):
-            break
-
         tgt_mask = model.create_tgt_mask(pred)
         decode_out = model.decoder(
             pred, encode_out, model.create_src_mask(src), tgt_mask
@@ -100,12 +82,20 @@ def greedy_decode(
         last_step_logits = decode_out[:, -1, :]
         all_logits.append(last_step_logits)
 
-        next_tokens = torch.argmax(last_step_logits, dim=-1)
-        next_tokens = next_tokens.unsqueeze(1)
-        pred = torch.cat([pred, next_tokens], dim=1)
+        next_token = torch.argmax(last_step_logits, dim=-1)
 
-        newly_finished = next_tokens.squeeze(1) == tgt_eos_idx
+        # Pad finished sequences with EOS index
+        next_token = next_token.masked_fill(finished, tgt_pad_idx)
+        next_token = next_token.unsqueeze(1)
+
+        pred = torch.cat([pred, next_token], dim=1)
+
+        # Update finished status
+        newly_finished = next_token.squeeze(1) == tgt_eos_idx
         finished = finished | newly_finished
+
+        if torch.all(finished):
+            break
 
     if return_logits:
         logits = torch.stack(all_logits, dim=1)
@@ -115,6 +105,7 @@ def greedy_decode(
         else:
             logits = logits[:, : (max_len - 1), :]
         return logits
+
     return pred
 
 
@@ -124,6 +115,7 @@ def oracle_greedy_search(
     src: torch.Tensor,
     tgt_eos_idx: int,
     tgt_bos_idx: int,
+    tgt_pad_idx: int,
     tgt_output: torch.Tensor,
     device: torch.device,
     max_len: int = 128,
@@ -138,6 +130,7 @@ def oracle_greedy_search(
         src: Source sequences tensor of shape (batch_size, src_seq_len).
         tgt_eos_idx: Index of the end-of-sequence token in the target vocabulary.
         tgt_bos_idx: Index of the beginning-of-sequence token in the target vocabulary.
+        tgt_pad_idx: Index of the padding token in the target vocabulary.
         tgt_output: Target sequences tensor of shape (batch_size, tgt_seq_len).
         device: Device to perform computations on.
         max_len: Maximum length of the generated sequences.
@@ -161,9 +154,6 @@ def oracle_greedy_search(
     min_len = _get_min_lengths(tgt_output, tgt_eos_idx)
 
     for step in range(max_len - 1):
-        if torch.all(finished):
-            break
-
         tgt_mask = model.create_tgt_mask(pred)
         decode_out = model.decoder(pred, encode_out, src_mask, tgt_mask)
 
@@ -176,11 +166,20 @@ def oracle_greedy_search(
         masked_logits = logits.clone()
         masked_logits[mask, tgt_eos_idx] = float("-inf")
 
-        next_token = masked_logits.argmax(dim=-1, keepdim=True)
+        next_token = torch.argmax(masked_logits, dim=-1)
+
+        # Pad finished sequences with EOS index
+        next_token = next_token.masked_fill(finished, tgt_pad_idx)
+
+        next_token = next_token.unsqueeze(1)
         pred = torch.cat([pred, next_token], dim=1)
 
+        # Update finished status
         newly_finished = next_token.squeeze(1) == tgt_eos_idx
         finished = finished | newly_finished
+
+        if torch.all(finished):
+            break
 
     if return_logits:
         logits = torch.stack(all_logits, dim=1)

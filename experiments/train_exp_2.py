@@ -2,7 +2,7 @@ from train import main, train_epoch_mixup
 import torch
 
 
-def run_experiment():
+def run_experiment(n_runs=3):
     """Run training with Mixup augmentation."""
     # Initialize hyperparameters
     hyperparams = {
@@ -13,7 +13,7 @@ def run_experiment():
         "dropout": 0.15,
         "learning_rate": 2e-4,
         "batch_size": 16,
-        "epochs": 20,
+        "epochs": 2,
         "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     }
 
@@ -21,11 +21,24 @@ def run_experiment():
     test_path = "data/length_split/tasks_test_length.txt"
     size = "length"
 
-    # Run training with Mixup augmentation
-    _, accuracy = main(
-        train_path, test_path, size, hyperparams, oracle=True, train_fn=train_epoch_mixup
-    )
-    print(f"Accuracy: {accuracy:.4f}")
+    results = {}
+    
+    for run in range(n_runs):       
+        seed = 42 + run
+        _, accuracy, g_accuracy = main(
+            train_path, test_path, size, hyperparams, oracle=True, random_seed=seed
+        )
+
+        results[f"run_{run}"] = (accuracy, g_accuracy)
+
+    print("\nFinal Results Summary:")
+    print("=" * 50)
+    print("Run | Accuracy | Greedy Accuracy")
+    print("-" * 50)
+    for run, (accuracy, g_accuracy) in results.items():
+        print(f"{run} | {accuracy:.4f} | {g_accuracy:.4f}")
+    print("-" * 50)
+
 
 if __name__ == "__main__":
     run_experiment()
