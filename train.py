@@ -315,7 +315,7 @@ def main(
     random_seed: int = 42,
     oracle: bool = False,
     train_fn: Callable = train_epoch_teacher_forcing,
-) -> Tuple[Transformer, float, float]:
+) -> Tuple[Transformer, float, float, float]:
     """
     Main function to train and evaluate the model on the SCAN dataset.
 
@@ -462,4 +462,4 @@ def main(
             f"Final Oracle Evaluation - Token Accuracy: {final_token_acc:.4f}, Sequence Accuracy: {final_seq_acc:.4f}"
         )
 
-    return model, best_accuracy, final_token_acc
+    return model, best_accuracy, final_token_acc, final_seq_acc

@@ -69,10 +69,10 @@ def run_experiment_3(n_runs=5):
         for run in range(n_runs):
             seed = 42 + run
             print(f"Run {run+1}/{n_runs} with seed {seed}")
-            _, accuracy, g_accuracy = main(
+            _, accuracy, g_accuracy, seq_accuracy = main(
                 train_path, test_path, name, hyperparams, random_seed=seed, oracle=False
             )
-            basic_results.append((accuracy, g_accuracy))
+            basic_results.append((accuracy, g_accuracy, seq_accuracy))
         results[name] = basic_results
 
     # Process the numerical cases (using existing 5 repetitions)
@@ -82,25 +82,27 @@ def run_experiment_3(n_runs=5):
 
         rep_results = []
         for train_path, test_path in train_test_pairs:
-            _, accuracy, g_accuracy = main(
+            _, accuracy, g_accuracy, seq_accuracy = main(
                 train_path, test_path, num, hyperparams, random_seed=42, oracle=False
             )
-            rep_results.append((accuracy, g_accuracy))
+            rep_results.append((accuracy, g_accuracy, seq_accuracy))
         results[num] = rep_results
 
     # Print summary of results
     print("\nFinal Results Summary:")
     print("=" * 50)
-    print("Dataset Size | Mean Accuracy ± Std Dev")
-    print("-" * 50)
+    print("Dataset Size | Mean Accuracy ± Std Dev | Mean Greedy Accuracy ± Std Dev | Mean Sequence Accuracy ± Std Dev")
+    print("-" * 120)
+
 
     for size, accuracies in results.items():
         accuracies = [
             (
                 acc.cpu().numpy() if torch.is_tensor(acc) else acc,
                 g_acc.cpu().numpy() if torch.is_tensor(g_acc) else g_acc,
+                s_acc.cpu().numpy() if torch.is_tensor(s_acc) else s_acc,
             )
-            for acc, g_acc in accuracies
+            for acc, g_acc, s_acc in accuracies
         ]
         mean = np.mean(accuracies, axis=0)
         std = np.std(accuracies, axis=0)
@@ -108,6 +110,8 @@ def run_experiment_3(n_runs=5):
         print(f"Individual runs: {', '.join(f'{acc[0]:.4f}' for acc in accuracies)}")
         print(f"Mean Greedy Accuracy: {mean[1]:.4f} ± {std[1]:.4f}")
         print(f"Individual runs: {', '.join(f'{acc[1]:.4f}' for acc in accuracies)}\n")
+        print(f"Mean Sequence Accuracy: {mean[2]:.4f} ± {std[2]:.4f}")
+        print(f"Individual runs: [{', '.join(f'{acc[2]:.4f}' for acc in accuracies)}]\n")
         print("-" * 50)
 
 
