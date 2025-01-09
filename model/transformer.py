@@ -42,7 +42,7 @@ class MultiHeadAttention(nn.Module):
         attn_score = query @ key.transpose(-1, -2)
 
         if mask is not None:
-            attn_score = attn_score.masked_fill(mask == 0, float('-inf'))
+            attn_score = attn_score.masked_fill(mask == 0, float("-inf"))
 
         attn_weight = torch.softmax(attn_score / self.head_dim**0.5, dim=-1)
 
@@ -256,6 +256,7 @@ class Transformer(nn.Module):
 
         self.src_pad_idx = src_pad_idx
         self.tgt_pad_idx = tgt_pad_idx
+        self.max_len = max_len
 
     def create_src_mask(self, src):
         device = src.device

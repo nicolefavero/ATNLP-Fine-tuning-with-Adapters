@@ -12,7 +12,7 @@ class Vocabulary:
 
     def _create_id2tok(self):
         num_special_tokens = len(self.special_tokens)
-        tokens = list(set(" ".join(self.data).split()))
+        tokens = sorted(list(set(" ".join(self.data).split())))
         id2tok = dict(enumerate(tokens, start=num_special_tokens))
         id2tok.update({v: k for k, v in self.special_tokens.items()})
 
@@ -24,17 +24,29 @@ class SCANDataset(Dataset):
         self.file_path = file_path
         self.max_len = max_len
         self.data = self._load_data()
-        # Create consolidated vocabulary from both commands and actions
-        all_text = [d["command"] for d in self.data] + [d["action"] for d in self.data]
-        self.vocab = Vocabulary(all_text)
-        self.bos_token = torch.tensor([self.vocab.tok2id["<BOS>"]])
-        self.eos_token = torch.tensor([self.vocab.tok2id["<EOS>"]])
-        self.pad_token = self.vocab.tok2id["<PAD>"]
-        self.unk_token = self.vocab.tok2id["<UNK>"]
+
+        # Create separate vocabularies for commands and actions
+        src_text = [d["command"] for d in self.data]
+        tgt_text = [d["action"] for d in self.data]
+        self.src_vocab = Vocabulary(src_text)
+        self.tgt_vocab = Vocabulary(tgt_text)
+
+        # Fetch tokens for both vocabularies
+        self.src_bos_token = torch.tensor([self.src_vocab.tok2id["<BOS>"]])
+        self.src_eos_token = torch.tensor([self.src_vocab.tok2id["<EOS>"]])
+        self.src_pad_token = self.src_vocab.tok2id["<PAD>"]
+        self.src_unk_token = self.src_vocab.tok2id["<UNK>"]
+
+        self.tgt_bos_token = torch.tensor([self.tgt_vocab.tok2id["<BOS>"]])
+        self.tgt_eos_token = torch.tensor([self.tgt_vocab.tok2id["<EOS>"]])
+        self.tgt_pad_token = self.tgt_vocab.tok2id["<PAD>"]
+        self.tgt_unk_token = self.tgt_vocab.tok2id["<UNK>"]
+
+        # Encode data
         self.encoded_data = [
             {
-                "src": self.encode(d["command"], self.vocab),
-                "tgt": self.encode(d["action"], self.vocab),
+                "src": self.encode(d["command"], self.src_vocab, is_src=True),
+                "tgt": self.encode(d["action"], self.tgt_vocab, is_src=False),
             }
             for d in self.data
         ]
@@ -50,25 +62,28 @@ class SCANDataset(Dataset):
                     data.append({"command": input, "action": output})
         return data
 
-    def encode(self, text, vocab):
+    def encode(self, text, vocab, is_src=True):
         tokens = text.split()
         # Vectorized token lookup
-        token_ids = [vocab.tok2id.get(tok, self.unk_token) for tok in tokens]
+        unk_token = self.src_unk_token if is_src else self.tgt_unk_token
+        token_ids = [vocab.tok2id.get(tok, unk_token) for tok in tokens]
         tokens = torch.tensor(token_ids)
 
-        # Efficient concatenation
-        tokens = torch.cat([self.bos_token, tokens, self.eos_token])
+        # Add BOS/EOS tokens
+        bos_token = self.src_bos_token if is_src else self.tgt_bos_token
+        eos_token = self.src_eos_token if is_src else self.tgt_eos_token
+        tokens = torch.cat([bos_token, tokens, eos_token])
         tokens = tokens[: self.max_len - 1]
 
         # Pad sequence
+        pad_token = self.src_pad_token if is_src else self.tgt_pad_token
         padded = torch.nn.functional.pad(
-            tokens, (0, self.max_len - len(tokens)), value=self.pad_token
+            tokens, (0, self.max_len - len(tokens)), value=pad_token
         )
         return padded
 
-    def decode(self, tokens, vocab=None):
-        if vocab is None:
-            vocab = self.vocab
+    def decode(self, tokens, is_src=True):
+        vocab = self.src_vocab if is_src else self.tgt_vocab
         tokens = [int(tok) for tok in tokens]
         tokens = [vocab.id2tok.get(tok, "<UNK>") for tok in tokens]
         tokens = [tok for tok in tokens if tok not in ["<BOS>", "<EOS>", "<PAD>"]]
@@ -104,6 +119,16 @@ if __name__ == "__main__":
     print(dataset[0])
     print(dataset[0]["src"])
     print(dataset[0]["tgt"])
-    print(dataset.vocab.vocab_size)  # Now only print once for shared vocab
-    print(dataset.decode(dataset[0]["src"], dataset.vocab))
-    print(dataset.decode(dataset[0]["tgt"], dataset.vocab))
+    print(f"Source vocabulary size: {dataset.src_vocab.vocab_size}")
+    print(f"Target vocabulary size: {dataset.tgt_vocab.vocab_size}")
+    print(dataset.decode(dataset[0]["src"], is_src=True))
+    print(dataset.decode(dataset[0]["tgt"], is_src=False))
+    # Print both vocabularies sorted by id
+    print(
+        "Source vocabulary:",
+        sorted(dataset.src_vocab.id2tok.items(), key=lambda x: x[0]),
+    )
+    print(
+        "Target vocabulary:",
+        sorted(dataset.tgt_vocab.id2tok.items(), key=lambda x: x[0]),
+    )

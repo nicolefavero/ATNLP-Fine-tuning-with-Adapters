@@ -24,12 +24,15 @@ def calculate_accuracy(pred, target, pad_idx, eos_idx):
         target = F.pad(target, (0, max_len - target.size(1)), value=pad_idx)
 
     # Token accuracy (excluding padding)
-    mask = target != pad_idx
-    correct = (pred == target) & mask
-    token_acc = correct.sum().float() / mask.sum().float() if mask.sum() > 0 else 0.0
+    token_mask = target != pad_idx
+    correct_tokens = (pred == target) & token_mask
+    token_acc = correct_tokens.sum().float() / token_mask.sum().float() if token_mask.sum() > 0 else 0.0
 
-    mask = target == eos_idx
-    seq_acc = torch.all((pred == target) | ~mask, dim=1).float().mean()
+    # Sequence accuracy (up to first EOS, considering padding)
+    seq_mask = torch.cumsum(target == eos_idx, dim=1) == 0
+    seq_mask = seq_mask & token_mask
+    correct_sequences = (pred == target) | ~seq_mask
+    seq_acc = torch.all(correct_sequences, dim=1).float().mean()
 
     return token_acc, seq_acc
 
@@ -165,6 +168,11 @@ def oracle_greedy_search(
         mask = current_len < min_len
         masked_logits = logits.clone()
         masked_logits[mask, tgt_eos_idx] = float("-inf")
+
+        # Force EOS if we've reached the target length
+        force_eos_mask = (current_len == min_len)
+        masked_logits[force_eos_mask, :] = float("-inf")
+        masked_logits[force_eos_mask, tgt_eos_idx] = float("inf")
 
         next_token = torch.argmax(masked_logits, dim=-1)
 

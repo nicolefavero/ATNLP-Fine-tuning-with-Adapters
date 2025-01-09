@@ -51,7 +51,7 @@ def train_epoch_teacher_forcing(
         optimizer.zero_grad()
         output = model(src, tgt_input)
 
-        output = output.reshape(-1, output.shape[-1])
+        output = output.view(-1, output.shape[-1])
         tgt_output = tgt_output.reshape(-1)
 
         loss = criterion(output, tgt_output)
@@ -103,7 +103,7 @@ def train_epoch_mixup(
             encode_out = model.encoder(src, model.create_src_mask(src))
             pred = torch.full(
                 (batch_size, 1),
-                dataloader.dataset.vocab.tok2id["<BOS>"],
+                dataloader.dataset.tgt_vocab.tok2id["<BOS>"],  # Changed to tgt_vocab
                 dtype=torch.long,
                 device=device,
             )
@@ -328,12 +328,13 @@ def main(
         oracle: Whether to use oracle greedy search during evaluation. Defaults to False.
         train_fn: Training function to use. Defaults to train_epoch_teacher_forcing.
     """
-    torch.manual_seed(random_seed)
-    torch.cuda.manual_seed(random_seed)
-    generator = torch.Generator().manual_seed(random_seed)
-    np.random.seed(random_seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    def set_seed(random_seed):
+        random.seed(random_seed)
+        torch.manual_seed(random_seed)
+        torch.cuda.manual_seed(random_seed)
+        np.random.seed(random_seed)
+
+    set_seed(random_seed)
 
     EMB_DIM = hyperparams["emb_dim"]
     N_LAYERS = hyperparams["n_layers"]
@@ -347,31 +348,34 @@ def main(
     dataset = SCANDataset(train_path)
     test_dataset = SCANDataset(test_path)
     train_loader = DataLoader(
-        dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=8, pin_memory=True, generator=generator
+        dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0, pin_memory=True,
     )
     test_loader = DataLoader(
-        test_dataset, batch_size=BATCH_SIZE, num_workers=8, pin_memory=True, generator=generator
+        test_dataset, batch_size=BATCH_SIZE, num_workers=0, pin_memory=True,
     )
 
-    # Get special tokens
-    pad_idx = dataset.vocab.tok2id["<PAD>"]
-    eos_idx = dataset.vocab.tok2id["<EOS>"]
-    bos_idx = dataset.vocab.tok2id["<BOS>"]
+    # Get special tokens for source and target vocabularies
+    src_pad_idx = dataset.src_vocab.tok2id["<PAD>"]
+    
+    tgt_pad_idx = dataset.tgt_vocab.tok2id["<PAD>"]
+    tgt_eos_idx = dataset.tgt_vocab.tok2id["<EOS>"]
+    tgt_bos_idx = dataset.tgt_vocab.tok2id["<BOS>"]
 
     # Dynamic epochs based on dataset size
     data_len = dataset.__len__()
-    if (100000 // data_len) > 50:
-        hyperparams["epochs"] = 50
+    if (100000 // data_len) > 100:
+        hyperparams["epochs"] = (100000 // data_len) 
     else:
         hyperparams["epochs"] = min(20, (100000 // data_len))
 
     EPOCHS = hyperparams["epochs"]
 
+    # Initialize model
     model = Transformer(
-        src_vocab_size=dataset.vocab.vocab_size,
-        tgt_vocab_size=dataset.vocab.vocab_size,
-        src_pad_idx=dataset.vocab.tok2id["<PAD>"],
-        tgt_pad_idx=dataset.vocab.tok2id["<PAD>"],
+        src_vocab_size=dataset.src_vocab.vocab_size,
+        tgt_vocab_size=dataset.tgt_vocab.vocab_size,
+        src_pad_idx=src_pad_idx,
+        tgt_pad_idx=tgt_pad_idx,
         emb_dim=EMB_DIM,
         num_layers=N_LAYERS,
         num_heads=N_HEADS,
@@ -380,17 +384,19 @@ def main(
         max_len=dataset.max_len,
     ).to(DEVICE)
 
-    criterion = nn.CrossEntropyLoss(ignore_index=dataset.vocab.tok2id["<PAD>"])
+    # Initialize optimizer, loss function and Tensorboard writer
+    criterion = nn.CrossEntropyLoss(ignore_index=tgt_pad_idx)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     writer = SummaryWriter(log_dir=f"runs/{model_suffix}")
 
     best_accuracy = 0.0
+    lowest_loss = float("inf")
     for epoch in range(EPOCHS):
         train_loss = train_fn(model, train_loader, optimizer, criterion, DEVICE)
 
         # Teacher forcing evaluation
         test_loss, tf_token_acc, tf_seq_acc = evaluate_teacher_forcing(
-            model, test_loader, criterion, DEVICE, pad_idx, eos_idx
+            model, test_loader, criterion, DEVICE, tgt_pad_idx, tgt_eos_idx
         )
 
         # Generation evaluation
@@ -411,7 +417,7 @@ def main(
         # writer.add_scalar('Accuracy/Generation_Token', gen_token_acc, epoch)
         # writer.add_scalar('Accuracy/Generation_Sequence', gen_seq_acc, epoch)
 
-        print(f"Dataset {model_suffix} - Epoch: {epoch+1}")
+        print(f"Dataset {model_suffix} - Epoch: {epoch+1}/{EPOCHS}")
         print(f"Train Loss: {train_loss:.4f}")
         print(f"Test Loss: {test_loss:.4f}")
         print(
@@ -441,15 +447,16 @@ def main(
     checkpoint = torch.load(f"model/best_model_{model_suffix}.pt")
     model.load_state_dict(checkpoint["model_state_dict"])
 
+    # Evaluate the best model
     _, final_token_acc, final_seq_acc = evaluate_greedy_search(
-        model, test_loader, criterion, DEVICE, eos_idx, bos_idx, pad_idx
+        model, test_loader, criterion, DEVICE, tgt_eos_idx, tgt_bos_idx, tgt_pad_idx
     )
     print(
         f"Final Evaluation - Token Accuracy: {final_token_acc:.4f}, Sequence Accuracy: {final_seq_acc:.4f}"
     )
     if oracle:
         _, final_token_acc, final_seq_acc = evaluate_oracle_greedy_search(
-            model, test_loader, criterion, DEVICE, eos_idx, bos_idx, pad_idx
+            model, test_loader, criterion, DEVICE, tgt_eos_idx, tgt_bos_idx, tgt_pad_idx
         )
         print(
             f"Final Oracle Evaluation - Token Accuracy: {final_token_acc:.4f}, Sequence Accuracy: {final_seq_acc:.4f}"

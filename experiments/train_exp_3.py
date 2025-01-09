@@ -6,6 +6,7 @@ from rich.traceback import install
 
 install()
 
+
 def get_add_prim_dataset_pairs():
     """Get pairs of training and test dataset paths for Experiment 3."""
     base_path = "data/add_prim_split"
@@ -27,21 +28,21 @@ def get_add_prim_dataset_pairs():
     additional_base_path = "data/add_prim_split/with_additional_examples"
     num_composed_commands = ["num1", "num2", "num4", "num8", "num16", "num32"]
     for num in num_composed_commands:
-        for rep in range(1, 2):  # Assuming 5 repetitions for each split
+        train_test_pairs = []
+        for rep in range(1, 6):  # Changed to 5 repetitions
             train_path = f"{additional_base_path}/tasks_train_addprim_complex_jump_{num}_rep{rep}.txt"
             test_path = f"{additional_base_path}/tasks_test_addprim_complex_jump_{num}_rep{rep}.txt"
-            pairs.append((train_path, test_path, f"{num}_rep{rep}"))
+            train_test_pairs.append((train_path, test_path))
+        pairs.append((train_test_pairs, num))
 
     return pairs
 
 
-def run_experiment_3(n_runs=3):
+def run_experiment_3(n_runs=5):
     """
     Run Experiment 3: Adding a new primitive and testing generalization to composed commands.
-    This function trains and evaluates the Transformer model for each dataset variation
-    (e.g., num0, num1, ..., num32), iterating over the specified dataset splits.
+    Uses n_runs for basic cases (jump, turn_left) and existing 5 repetitions for numerical cases.
     """
-    n_runs = n_runs
     results = {}
 
     hyperparams = {
@@ -59,22 +60,33 @@ def run_experiment_3(n_runs=3):
     # Fetch dataset pairs
     pairs = get_add_prim_dataset_pairs()
 
-    # Run training and evaluation for each dataset pair
-    for train_path, test_path, size in pairs:
-        results[size] = []
-        print(f"\nStarting training for dataset {size}")
+    # Process the basic jump and turn_left cases with n_runs
+    for train_path, test_path, name in pairs[:2]:
+        print(f"\nProcessing dataset {name}")
         print("=" * 70)
 
+        basic_results = []
         for run in range(n_runs):
-            seed = 42 + run  # Different seed for each run
+            seed = 42 + run
             print(f"Run {run+1}/{n_runs} with seed {seed}")
-
-            # Call the existing `main` function with hyperparameters
             _, accuracy, g_accuracy = main(
-                train_path, test_path, size, hyperparams, random_seed=seed, oracle=False
+                train_path, test_path, name, hyperparams, random_seed=seed, oracle=False
             )
-            results[size].append((accuracy, g_accuracy))
-            print(f"Run {run+1} Accuracy: {accuracy:.4f}, Greedy Accuracy: {g_accuracy:.4f}")
+            basic_results.append((accuracy, g_accuracy))
+        results[name] = basic_results
+
+    # Process the numerical cases (using existing 5 repetitions)
+    for train_test_pairs, num in pairs[2:]:
+        print(f"\nProcessing dataset {num}")
+        print("=" * 70)
+
+        rep_results = []
+        for train_path, test_path in train_test_pairs:
+            _, accuracy, g_accuracy = main(
+                train_path, test_path, num, hyperparams, random_seed=42, oracle=False
+            )
+            rep_results.append((accuracy, g_accuracy))
+        results[num] = rep_results
 
     # Print summary of results
     print("\nFinal Results Summary:")
@@ -83,9 +95,13 @@ def run_experiment_3(n_runs=3):
     print("-" * 50)
 
     for size, accuracies in results.items():
-        accuracies = [(acc.cpu().numpy() if torch.is_tensor(acc) else acc,
-                   g_acc.cpu().numpy() if torch.is_tensor(g_acc) else g_acc) 
-                  for acc, g_acc in accuracies]
+        accuracies = [
+            (
+                acc.cpu().numpy() if torch.is_tensor(acc) else acc,
+                g_acc.cpu().numpy() if torch.is_tensor(g_acc) else g_acc,
+            )
+            for acc, g_acc in accuracies
+        ]
         mean = np.mean(accuracies, axis=0)
         std = np.std(accuracies, axis=0)
         print(f"{size:11} | Mean Accuracy: {mean[0]:.4f} ± {std[0]:.4f}")

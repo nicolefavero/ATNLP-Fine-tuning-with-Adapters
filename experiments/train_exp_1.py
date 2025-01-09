@@ -20,7 +20,7 @@ def get_dataset_pairs():
     return pairs
 
 
-def run_all_variations(n_runs=3):
+def run_all_variations(n_runs=5):
     """Run training 5 times for all dataset size variations with different seeds"""
     n_runs = n_runs
     results = {}
