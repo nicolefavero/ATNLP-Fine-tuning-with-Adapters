@@ -173,38 +173,48 @@ def evaluate_greedy_search(
         eos_idx: End of sequence token index.
         bos_idx: Beginning of sequence token index.
         pad_idx: Padding token index.
+
+    Returns:
+        - Average loss
+        - Token-level accuracy
+        - Sequence-level accuracy
+        - Length-specific accuracies by action length
+        - Length-specific accuracies by command length
     """
     model.eval()
     total_loss = 0
     token_accuracies = []
     seq_accuracies = []
 
+    # Initialize dictionaries to store accuracies by length
+    length_acc_by_action = {}
+    length_acc_by_command = {}
+
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating Greedy Search"):
             src = batch["src"].to(device)
             tgt = batch["tgt"].to(device)
-            action_lengths = batch["action_lengths"]  # Action sequence lengths
-            command_lengths = batch["command_lengths"]  # Command lengths
+            action_lengths = batch["action_lengths"]
+            command_lengths = batch["command_lengths"]
 
-            tgt_output = tgt[:, 1:]
+            tgt_output = tgt[:, 1:]  # Skip BOS token for the output
 
             # Use greedy decoding
             pred = greedy_decode(
-                model,
-                src,
-                eos_idx,
-                bos_idx,
-                pad_idx,
-                device,
-                return_logits=False,
+                model, src, eos_idx, bos_idx, pad_idx, device, return_logits=False
             )
-            pred = pred[:, 1:]
-            token_acc, seq_acc = calculate_accuracy(pred, tgt_output, pad_idx, eos_idx)
-            token_accuracies.append(token_acc)
-            seq_accuracies.append(seq_acc)
+            pred = pred[:, 1:]  # Skip BOS token for predictions
 
-            # Group accuracies by lengths
-            for i in range(len(action_lengths)):
+            # Calculate accuracies
+            for i in range(len(pred)):
+                # Token-level and sequence-level accuracies
+                token_acc, seq_acc = calculate_accuracy(
+                    pred[i].unsqueeze(0), tgt_output[i].unsqueeze(0), pad_idx, eos_idx
+                )
+                token_accuracies.append(token_acc)
+                seq_accuracies.append(seq_acc)
+
+                # Length-specific accuracies
                 action_len = action_lengths[i].item()
                 command_len = command_lengths[i].item()
 
@@ -218,19 +228,19 @@ def evaluate_greedy_search(
                     length_acc_by_command[command_len] = []
                 length_acc_by_command[command_len].append(token_acc)
 
-    # Average accuracies by length
-    length_acc_by_action = {
-        length: sum(accs) / len(accs) for length, accs in length_acc_by_action.items()
+    # Aggregate length-specific accuracies
+    greedy_action_acc = {
+        k: sum(v) / len(v) for k, v in length_acc_by_action.items()
     }
-    length_acc_by_command = {
-        length: sum(accs) / len(accs) for length, accs in length_acc_by_command.items()
+    greedy_command_acc = {
+        k: sum(v) / len(v) for k, v in length_acc_by_command.items()
     }
 
-    avg_loss = total_loss / len(dataloader)
+    avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0
     avg_token_acc = sum(token_accuracies) / len(token_accuracies)
     avg_seq_acc = sum(seq_accuracies) / len(seq_accuracies)
 
-    return avg_loss, avg_token_acc, avg_seq_acc, length_acc_by_action, length_acc_by_command
+    return avg_loss, avg_token_acc, avg_seq_acc, greedy_action_acc, greedy_command_acc
 
 
 def evaluate_teacher_forcing(
@@ -299,6 +309,8 @@ def evaluate_oracle_greedy_search(
     total_loss = 0
     token_accuracies = []
     seq_accuracies = []
+
+    # Initialize dictionaries for length-specific accuracies
     length_acc_by_action = {}
     length_acc_by_command = {}
 
@@ -309,7 +321,7 @@ def evaluate_oracle_greedy_search(
             action_lengths = batch["action_lengths"]  # Action sequence lengths
             command_lengths = batch["command_lengths"]  # Command lengths
 
-            tgt_output = tgt[:, 1:]
+            tgt_output = tgt[:, 1:]  # Skip BOS token
 
             # Use oracle greedy decoding
             pred = oracle_greedy_search(
@@ -322,13 +334,17 @@ def evaluate_oracle_greedy_search(
                 device,
                 return_logits=False,
             )
-            pred = pred[:, 1:]
-            token_acc, seq_acc = calculate_accuracy(pred, tgt_output, pad_idx, eos_idx)
-            token_accuracies.append(token_acc)
-            seq_accuracies.append(seq_acc)
+            pred = pred[:, 1:]  # Skip BOS token for predictions
 
-            # Group accuracies by lengths
-            for i in range(len(action_lengths)):
+            # Calculate token-level and sequence-level accuracies
+            for i in range(len(pred)):
+                token_acc, seq_acc = calculate_accuracy(
+                    pred[i].unsqueeze(0), tgt_output[i].unsqueeze(0), pad_idx, eos_idx
+                )
+                token_accuracies.append(token_acc)
+                seq_accuracies.append(seq_acc)
+
+                # Group accuracies by lengths
                 action_len = action_lengths[i].item()
                 command_len = command_lengths[i].item()
 
@@ -342,15 +358,15 @@ def evaluate_oracle_greedy_search(
                     length_acc_by_command[command_len] = []
                 length_acc_by_command[command_len].append(token_acc)
 
-    # Average accuracies by length
+    # Aggregate length-specific accuracies
     length_acc_by_action = {
-        length: sum(accs) / len(accs) for length, accs in length_acc_by_action.items()
+        k: sum(v) / len(v) for k, v in length_acc_by_action.items()
     }
     length_acc_by_command = {
-        length: sum(accs) / len(accs) for length, accs in length_acc_by_command.items()
+        k: sum(v) / len(v) for k, v in length_acc_by_command.items()
     }
 
-    avg_loss = total_loss / len(dataloader) if total_loss > 0 else 0.0
+    avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0.0
     avg_token_acc = sum(token_accuracies) / len(token_accuracies)
     avg_seq_acc = sum(seq_accuracies) / len(seq_accuracies)
 
@@ -365,18 +381,19 @@ def main(
     random_seed: int = 42,
     oracle: bool = False,
     train_fn: Callable = train_epoch_teacher_forcing,
-) -> Tuple[Transformer, float, float, float]:
+) -> Tuple[Transformer, float, float, float, dict, dict, float, float]:
     """
     Main function to train and evaluate the model on the SCAN dataset.
 
-    Args:
-        train_path: Path to the training dataset.
-        test_path: Path to the test dataset.
-        model_suffix: Suffix for the model filename.
-        hyperparams: Dictionary of hyperparameters.
-        random_seed: Random seed for reproducibility. Defaults to 42.
-        oracle: Whether to use oracle greedy search during evaluation. Defaults to False.
-        train_fn: Training function to use. Defaults to train_epoch_teacher_forcing.
+    Returns:
+        - Model
+        - Best accuracy (token-level teacher forcing)
+        - Final token accuracy (greedy)
+        - Final sequence accuracy (greedy)
+        - Greedy action length accuracy
+        - Greedy command length accuracy
+        - Final sequence accuracy (oracle)
+        - Oracle action and command length accuracies
     """
     def set_seed(random_seed):
         random.seed(random_seed)
@@ -508,6 +525,9 @@ def main(
     print(f"Greedy Accuracy by Action Length: {greedy_action_acc}")
     print(f"Greedy Accuracy by Command Length: {greedy_command_acc}")
 
+    # Initialize oracle sequence accuracy to 0.0 in case oracle is not enabled
+    oracle_seq_acc = 0.0
+
     # Oracle greedy evaluation (if enabled)
     if oracle:
         _, oracle_token_acc, oracle_seq_acc, oracle_action_acc, oracle_command_acc = evaluate_oracle_greedy_search(
@@ -516,4 +536,5 @@ def main(
         print(f"Oracle Accuracy by Action Length: {oracle_action_acc}")
         print(f"Oracle Accuracy by Command Length: {oracle_command_acc}")
 
-    return model, best_accuracy, final_token_acc, final_seq_acc
+    return (model, best_accuracy, final_token_acc, final_seq_acc, greedy_action_acc, greedy_command_acc, oracle_token_acc, oracle_seq_acc,)
+

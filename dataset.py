@@ -15,7 +15,6 @@ class Vocabulary:
         tokens = sorted(list(set(" ".join(self.data).split())))
         id2tok = dict(enumerate(tokens, start=num_special_tokens))
         id2tok.update({v: k for k, v in self.special_tokens.items()})
-
         return id2tok
 
 
@@ -47,6 +46,8 @@ class SCANDataset(Dataset):
             {
                 "src": self.encode(d["command"], self.src_vocab, is_src=True),
                 "tgt": self.encode(d["action"], self.tgt_vocab, is_src=False),
+                "action_length": len(d["action"].split()),  # Length of action sequence
+                "command_length": len(d["command"].split()),  # Length of command sequence
             }
             for d in self.data
         ]
@@ -107,10 +108,18 @@ class SCANDataset(Dataset):
                         for i in range(*idx.indices(len(self)))
                     ]
                 ),
+                "action_lengths": torch.tensor(
+                    [self.encoded_data[i]["action_length"] for i in range(*idx.indices(len(self)))]
+                ),
+                "command_lengths": torch.tensor(
+                    [self.encoded_data[i]["command_length"] for i in range(*idx.indices(len(self)))]
+                ),
             }
         return {
             "src": self.encoded_data[idx]["src"].clone(),
             "tgt": self.encoded_data[idx]["tgt"].clone(),
+            "action_lengths": self.encoded_data[idx]["action_length"],
+            "command_lengths": self.encoded_data[idx]["command_length"],
         }
 
 
@@ -119,6 +128,8 @@ if __name__ == "__main__":
     print(dataset[0])
     print(dataset[0]["src"])
     print(dataset[0]["tgt"])
+    print(dataset[0]["action_lengths"])
+    print(dataset[0]["command_lengths"])
     print(f"Source vocabulary size: {dataset.src_vocab.vocab_size}")
     print(f"Target vocabulary size: {dataset.tgt_vocab.vocab_size}")
     print(dataset.decode(dataset[0]["src"], is_src=True))
