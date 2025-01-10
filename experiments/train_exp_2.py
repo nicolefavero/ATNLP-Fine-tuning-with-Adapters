@@ -25,11 +25,17 @@ def run_experiment(n_runs=3):
     
     for run in range(n_runs):       
         seed = 42 + run
-        _, accuracy, g_accuracy = main(
+        model, accuracy, g_accuracy = main(
             train_path, test_path, size, hyperparams, oracle=True, random_seed=seed
         )
 
+        # Collect results for display
         results[f"run_{run}"] = (accuracy, g_accuracy)
+
+        print(f"\nRun {run}:")
+        print("-" * 50)
+        print(f"Greedy Accuracy on New Commands: {accuracy:.4f}")
+        print(f"Oracle Accuracy on New Commands: {g_accuracy:.4f}")
 
     print("\nFinal Results Summary:")
     print("=" * 50)

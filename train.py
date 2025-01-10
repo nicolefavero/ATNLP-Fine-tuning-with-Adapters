@@ -161,7 +161,7 @@ def evaluate_greedy_search(
     eos_idx: int,
     bos_idx: int,
     pad_idx: int,
-) -> Tuple[float, torch.Tensor, torch.Tensor]:
+) -> Tuple[float, float, float, dict, dict]:
     """
     Evaluates the model using greedy search decoding.
 
@@ -183,6 +183,8 @@ def evaluate_greedy_search(
         for batch in tqdm(dataloader, desc="Evaluating Greedy Search"):
             src = batch["src"].to(device)
             tgt = batch["tgt"].to(device)
+            action_lengths = batch["action_lengths"]  # Action sequence lengths
+            command_lengths = batch["command_lengths"]  # Command lengths
 
             tgt_output = tgt[:, 1:]
 
@@ -201,11 +203,34 @@ def evaluate_greedy_search(
             token_accuracies.append(token_acc)
             seq_accuracies.append(seq_acc)
 
+            # Group accuracies by lengths
+            for i in range(len(action_lengths)):
+                action_len = action_lengths[i].item()
+                command_len = command_lengths[i].item()
+
+                # Action lengths
+                if action_len not in length_acc_by_action:
+                    length_acc_by_action[action_len] = []
+                length_acc_by_action[action_len].append(token_acc)
+
+                # Command lengths
+                if command_len not in length_acc_by_command:
+                    length_acc_by_command[command_len] = []
+                length_acc_by_command[command_len].append(token_acc)
+
+    # Average accuracies by length
+    length_acc_by_action = {
+        length: sum(accs) / len(accs) for length, accs in length_acc_by_action.items()
+    }
+    length_acc_by_command = {
+        length: sum(accs) / len(accs) for length, accs in length_acc_by_command.items()
+    }
+
     avg_loss = total_loss / len(dataloader)
     avg_token_acc = sum(token_accuracies) / len(token_accuracies)
     avg_seq_acc = sum(seq_accuracies) / len(seq_accuracies)
 
-    return avg_loss, avg_token_acc, avg_seq_acc
+    return avg_loss, avg_token_acc, avg_seq_acc, length_acc_by_action, length_acc_by_command
 
 
 def evaluate_teacher_forcing(
@@ -259,28 +284,30 @@ def evaluate_oracle_greedy_search(
     eos_idx: int,
     bos_idx: int,
     pad_idx: int,
-) -> Tuple[float, torch.Tensor, torch.Tensor]:
+) -> Tuple[float, float, float, dict, dict]:
     """
-    Evaluates the model using oracle greedy search decoding.
+    Evaluates the model using oracle greedy search decoding and groups token-level accuracy by lengths.
 
-    Args:
-        model: The model to evaluate.
-        dataloader: DataLoader for the evaluation data.
-        criterion: Loss function.
-        device: Device to run the evaluation on.
-        eos_idx: End of sequence token index.
-        bos_idx: Beginning of sequence token index.
-        pad_idx: Padding token index.
+    Returns:
+        avg_loss: Average loss over the dataset.
+        avg_token_acc: Average token-level accuracy.
+        avg_seq_acc: Average sequence-level accuracy.
+        length_acc_by_action: Token-level accuracy grouped by action sequence length.
+        length_acc_by_command: Token-level accuracy grouped by command length.
     """
     model.eval()
     total_loss = 0
     token_accuracies = []
     seq_accuracies = []
+    length_acc_by_action = {}
+    length_acc_by_command = {}
 
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating Oracle Greedy Search"):
             src = batch["src"].to(device)
             tgt = batch["tgt"].to(device)
+            action_lengths = batch["action_lengths"]  # Action sequence lengths
+            command_lengths = batch["command_lengths"]  # Command lengths
 
             tgt_output = tgt[:, 1:]
 
@@ -300,11 +327,34 @@ def evaluate_oracle_greedy_search(
             token_accuracies.append(token_acc)
             seq_accuracies.append(seq_acc)
 
-    avg_loss = total_loss / len(dataloader)
+            # Group accuracies by lengths
+            for i in range(len(action_lengths)):
+                action_len = action_lengths[i].item()
+                command_len = command_lengths[i].item()
+
+                # Action lengths
+                if action_len not in length_acc_by_action:
+                    length_acc_by_action[action_len] = []
+                length_acc_by_action[action_len].append(token_acc)
+
+                # Command lengths
+                if command_len not in length_acc_by_command:
+                    length_acc_by_command[command_len] = []
+                length_acc_by_command[command_len].append(token_acc)
+
+    # Average accuracies by length
+    length_acc_by_action = {
+        length: sum(accs) / len(accs) for length, accs in length_acc_by_action.items()
+    }
+    length_acc_by_command = {
+        length: sum(accs) / len(accs) for length, accs in length_acc_by_command.items()
+    }
+
+    avg_loss = total_loss / len(dataloader) if total_loss > 0 else 0.0
     avg_token_acc = sum(token_accuracies) / len(token_accuracies)
     avg_seq_acc = sum(seq_accuracies) / len(seq_accuracies)
 
-    return avg_loss, avg_token_acc, avg_seq_acc
+    return avg_loss, avg_token_acc, avg_seq_acc, length_acc_by_action, length_acc_by_command
 
 
 def main(
@@ -447,19 +497,23 @@ def main(
     checkpoint = torch.load(f"model/best_model_{model_suffix}.pt")
     model.load_state_dict(checkpoint["model_state_dict"])
 
-    # Evaluate the best model
-    _, final_token_acc, final_seq_acc = evaluate_greedy_search(
+    # Load the best model
+    checkpoint = torch.load(f"model/best_model_{model_suffix}.pt")
+    model.load_state_dict(checkpoint["model_state_dict"])
+
+    # Greedy search evaluation
+    _, final_token_acc, final_seq_acc, greedy_action_acc, greedy_command_acc = evaluate_greedy_search(
         model, test_loader, criterion, DEVICE, tgt_eos_idx, tgt_bos_idx, tgt_pad_idx
     )
-    print(
-        f"Final Evaluation - Token Accuracy: {final_token_acc:.4f}, Sequence Accuracy: {final_seq_acc:.4f}"
-    )
+    print(f"Greedy Accuracy by Action Length: {greedy_action_acc}")
+    print(f"Greedy Accuracy by Command Length: {greedy_command_acc}")
+
+    # Oracle greedy evaluation (if enabled)
     if oracle:
-        _, final_token_acc, final_seq_acc = evaluate_oracle_greedy_search(
+        _, oracle_token_acc, oracle_seq_acc, oracle_action_acc, oracle_command_acc = evaluate_oracle_greedy_search(
             model, test_loader, criterion, DEVICE, tgt_eos_idx, tgt_bos_idx, tgt_pad_idx
         )
-        print(
-            f"Final Oracle Evaluation - Token Accuracy: {final_token_acc:.4f}, Sequence Accuracy: {final_seq_acc:.4f}"
-        )
+        print(f"Oracle Accuracy by Action Length: {oracle_action_acc}")
+        print(f"Oracle Accuracy by Command Length: {oracle_command_acc}")
 
     return model, best_accuracy, final_token_acc, final_seq_acc
