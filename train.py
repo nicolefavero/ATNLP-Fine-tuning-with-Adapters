@@ -525,7 +525,8 @@ def main(
     print(f"Greedy Accuracy by Action Length: {greedy_action_acc}")
     print(f"Greedy Accuracy by Command Length: {greedy_command_acc}")
 
-    # Initialize oracle sequence accuracy to 0.0 in case oracle is not enabled
+    # Initialize oracle_token_acc and oracle_seq_acc to default values
+    oracle_token_acc = 0.0
     oracle_seq_acc = 0.0
 
     # Oracle greedy evaluation (if enabled)

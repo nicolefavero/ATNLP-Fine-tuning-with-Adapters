@@ -48,7 +48,7 @@ def run_all_variations(n_runs=5):
 
         for train_path, test_path, size in get_dataset_pairs():
             print(f"\nTraining dataset size p{size}")
-            _, accuracy, g_accuracy = main(
+            _, accuracy, g_accuracy, *_ = main(
                 train_path, test_path, f"p_{size}", hyperparams, random_seed=seed,
             )
             results[f"p{size}"].append((accuracy, g_accuracy))

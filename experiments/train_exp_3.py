@@ -69,7 +69,7 @@ def run_experiment_3(n_runs=5):
         for run in range(n_runs):
             seed = 42 + run
             print(f"Run {run+1}/{n_runs} with seed {seed}")
-            _, accuracy, g_accuracy, seq_accuracy = main(
+            _, accuracy, g_accuracy, seq_accuracy, *_ = main(
                 train_path, test_path, name, hyperparams, random_seed=seed, oracle=False
             )
             basic_results.append((accuracy, g_accuracy, seq_accuracy))
@@ -82,7 +82,7 @@ def run_experiment_3(n_runs=5):
 
         rep_results = []
         for train_path, test_path in train_test_pairs:
-            _, accuracy, g_accuracy, seq_accuracy = main(
+            _, accuracy, g_accuracy, seq_accuracy, *_= main(
                 train_path, test_path, num, hyperparams, random_seed=42, oracle=False
             )
             rep_results.append((accuracy, g_accuracy, seq_accuracy))
