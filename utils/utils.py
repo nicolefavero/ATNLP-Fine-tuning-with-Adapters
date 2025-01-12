@@ -48,27 +48,28 @@ def greedy_decode(
     max_len: int = 128,
     return_logits: bool = False,
 ) -> torch.Tensor:
-    """
-    Performs greedy decoding for a batch of source sequences using the given model.
-
-    Args:
-        model: The seq2seq transformer model.
-        src: Source sequences tensor of shape (batch_size, src_seq_len).
-        tgt_eos_idx: Index of the end-of-sequence token in the target vocabulary.
-        tgt_bos_idx: Index of the beginning-of-sequence token in the target vocabulary.
-        tgt_pad_idx: Index of the padding token in the target vocabulary.
-        device: Device to perform computations on.
-        max_len: Maximum length of the generated sequences.
-        return_logits: Whether to return the logits of each generated token.
-
-    Returns:
-        If return_logits is False:
-            Tensor of generated token indices with shape (batch_size, decoded_length).
-        If return_logits is True:
-            Tensor of logits with shape (batch_size, decoded_length, vocab_size).
-    """
+    """Performs greedy decoding, now supporting both Transformer and T5."""
     model.eval()
 
+    # Handle T5 model differently
+    if isinstance(model, T5Wrapper):
+        # Use T5's generate method
+        outputs = model.model.generate(
+            src,
+            max_length=max_len,
+            num_beams=1,  # greedy decoding
+            pad_token_id=tgt_pad_idx,
+            eos_token_id=tgt_eos_idx,
+            bos_token_id=tgt_bos_idx,
+            use_cache=True,
+            return_dict_in_generate=True,
+            output_scores=return_logits
+        )
+        if return_logits:
+            return outputs.scores
+        return outputs.sequences
+
+    # Original Transformer decoding logic
     batch_size = src.size(0)
     encode_out = model.encoder(src, model.create_src_mask(src))
     pred = torch.full((batch_size, 1), tgt_bos_idx, dtype=torch.long, device=device)

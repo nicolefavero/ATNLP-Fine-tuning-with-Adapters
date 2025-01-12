@@ -12,6 +12,9 @@ from rich.traceback import install
 
 install()
 import numpy as np
+from typing import Type, Tuple, Callable
+from transformers import T5ForConditionalGeneration, T5Tokenizer
+from model.t5_transformer import T5Wrapper
 from utils.utils import greedy_decode, oracle_greedy_search, calculate_accuracy
 from typing import Tuple, Callable
 from torch.utils.tensorboard import SummaryWriter
@@ -27,39 +30,43 @@ def train_epoch_teacher_forcing(
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     device: torch.device,
+    accumulation_steps: int = 4,  # Accumulate gradients
 ) -> float:
-    """
-    Trains the model for one epoch using teacher forcing.
-
-    Args:
-        model: The model to train.
-        dataloader: DataLoader for the training data.
-        optimizer: Optimizer for training.
-        criterion: Loss function.
-        device: Device to run the training on.
-    """
     model.train()
     total_loss = 0
-
-    for batch in tqdm(dataloader, desc="Training"):
+    optimizer.zero_grad()  # Zero gradients at start
+    
+    for i, batch in enumerate(tqdm(dataloader, desc="Training")):
         src = batch["src"].to(device)
         tgt = batch["tgt"].to(device)
 
         tgt_input = tgt[:, :-1]
         tgt_output = tgt[:, 1:]
 
-        optimizer.zero_grad()
         output = model(src, tgt_input)
+        
+        if isinstance(output, torch.Tensor):
+            output = output.view(-1, output.shape[-1])
+            tgt_output = tgt_output.reshape(-1)
+            loss = criterion(output, tgt_output)
+        else:
+            loss = output.loss
 
-        output = output.view(-1, output.shape[-1])
-        tgt_output = tgt_output.reshape(-1)
-
-        loss = criterion(output, tgt_output)
+        # Normalize loss for gradient accumulation
+        loss = loss / accumulation_steps
         loss.backward()
-        nn_utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
-        optimizer.step()
 
-        total_loss += loss.item()
+        if (i + 1) % accumulation_steps == 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            optimizer.step()
+            optimizer.zero_grad()
+
+        total_loss += loss.item() * accumulation_steps
+
+    # Handle any remaining gradients
+    if (i + 1) % accumulation_steps != 0:
+        optimizer.step()
+        optimizer.zero_grad()
 
     return total_loss / len(dataloader)
 
@@ -262,14 +269,21 @@ def evaluate_teacher_forcing(
 
             output = model(src, tgt_input)
 
-            output = output.contiguous().view(-1, output.shape[-1])
-            tgt_output = tgt_output.contiguous().view(-1)
+            # Handle both regular Transformer and T5 outputs
+            if isinstance(output, torch.Tensor):
+                # Regular Transformer output
+                output_for_loss = output.contiguous().view(-1, output.shape[-1])
+                tgt_output_flat = tgt_output.contiguous().view(-1)
+                loss = criterion(output_for_loss, tgt_output_flat)
+                pred = output.argmax(dim=-1)
+            else:
+                # T5 output
+                loss = output.loss
+                pred = output.logits.argmax(dim=-1)
 
-            loss = criterion(output, tgt_output)
             total_loss += loss.item()
 
             # Calculate accuracies
-            pred = output.argmax(dim=-1).view(tgt.size(0), -1)
             token_acc, seq_acc = calculate_accuracy(
                 pred,
                 tgt[:, 1:],
@@ -381,19 +395,11 @@ def main(
     random_seed: int = 42,
     oracle: bool = False,
     train_fn: Callable = train_epoch_teacher_forcing,
-) -> Tuple[Transformer, float, float, float, dict, dict, float, float]:
+    model_class: Type = T5Wrapper,
+):
     """
     Main function to train and evaluate the model on the SCAN dataset.
-
-    Returns:
-        - Model
-        - Best accuracy (token-level teacher forcing)
-        - Final token accuracy (greedy)
-        - Final sequence accuracy (greedy)
-        - Greedy action length accuracy
-        - Greedy command length accuracy
-        - Final sequence accuracy (oracle)
-        - Oracle action and command length accuracies
+    Now supports both Transformer and T5 models.
     """
     def set_seed(random_seed):
         random.seed(random_seed)
@@ -403,32 +409,22 @@ def main(
 
     set_seed(random_seed)
 
-    EMB_DIM = hyperparams["emb_dim"]
-    N_LAYERS = hyperparams["n_layers"]
-    N_HEADS = hyperparams["n_heads"]
-    FORWARD_DIM = hyperparams["forward_dim"]
-    DROPOUT = hyperparams["dropout"]
-    LEARNING_RATE = hyperparams["learning_rate"]
-    BATCH_SIZE = hyperparams["batch_size"]
+    # Extract DEVICE from hyperparams
     DEVICE = hyperparams["device"]
 
+    # Load datasets and create dataloaders
     dataset = SCANDataset(train_path)
     test_dataset = SCANDataset(test_path)
     train_loader = DataLoader(
-        dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0, pin_memory=True,
+        dataset, batch_size=hyperparams["batch_size"], 
+        shuffle=True, num_workers=4, pin_memory=True,
     )
     test_loader = DataLoader(
-        test_dataset, batch_size=BATCH_SIZE, num_workers=0, pin_memory=True,
+        test_dataset, batch_size=hyperparams["batch_size"], 
+        num_workers=0, pin_memory=True,
     )
 
-    # Get special tokens for source and target vocabularies
-    src_pad_idx = dataset.src_vocab.tok2id["<PAD>"]
-    
-    tgt_pad_idx = dataset.tgt_vocab.tok2id["<PAD>"]
-    tgt_eos_idx = dataset.tgt_vocab.tok2id["<EOS>"]
-    tgt_bos_idx = dataset.tgt_vocab.tok2id["<BOS>"]
-
-    # Dynamic epochs based on dataset size
+    # Dynamic epochs calculation
     data_len = dataset.__len__()
     if (100000 // data_len) > 100:
         hyperparams["epochs"] = (100000 // data_len) 
@@ -437,23 +433,25 @@ def main(
 
     EPOCHS = hyperparams["epochs"]
 
-    # Initialize model
-    model = Transformer(
+    # Get special tokens
+    src_pad_idx = dataset.src_vocab.tok2id["<PAD>"]
+    tgt_pad_idx = dataset.tgt_vocab.tok2id["<PAD>"]
+    tgt_eos_idx = dataset.tgt_vocab.tok2id["<EOS>"]
+    tgt_bos_idx = dataset.tgt_vocab.tok2id["<BOS>"]
+
+    # Initialize model using provided model class
+    model = model_class(
         src_vocab_size=dataset.src_vocab.vocab_size,
         tgt_vocab_size=dataset.tgt_vocab.vocab_size,
         src_pad_idx=src_pad_idx,
         tgt_pad_idx=tgt_pad_idx,
-        emb_dim=EMB_DIM,
-        num_layers=N_LAYERS,
-        num_heads=N_HEADS,
-        forward_dim=FORWARD_DIM,
-        dropout=DROPOUT,
         max_len=dataset.max_len,
+        **hyperparams
     ).to(DEVICE)
 
-    # Initialize optimizer, loss function and Tensorboard writer
+    # Initialize optimizer and criterion
+    optimizer = torch.optim.AdamW(model.parameters(), lr=hyperparams["learning_rate"])
     criterion = nn.CrossEntropyLoss(ignore_index=tgt_pad_idx)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     writer = SummaryWriter(log_dir=f"runs/{model_suffix}")
 
     best_accuracy = 0.0
