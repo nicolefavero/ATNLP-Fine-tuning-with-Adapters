@@ -1,15 +1,20 @@
 from transformers import T5ForConditionalGeneration, T5Tokenizer
 from torch.utils.data import DataLoader
+import torch.nn as nn
 from dataset import SCANDataset
 import torch
 
-
-class T5Wrapper(torch.nn.Module):
+class T5Wrapper(nn.Module):
     def __init__(self, model_name="t5-small", max_len=128):
         super().__init__()
         self.max_len = max_len
         self.model = T5ForConditionalGeneration.from_pretrained(model_name)
         self.tokenizer = T5Tokenizer.from_pretrained(model_name)
+
+        # Ensure BOS token ID is defined
+        if self.tokenizer.bos_token_id is None:
+            self.tokenizer.bos_token_id = self.tokenizer.pad_token_id
+            print(f"Assigned BOS Token ID: {self.tokenizer.bos_token_id}")
 
     def forward(self, src, tgt=None):
         """

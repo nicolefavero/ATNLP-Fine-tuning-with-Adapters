@@ -52,6 +52,85 @@ def train_epoch_teacher_forcing(
 
     return total_loss / len(dataloader)
 
+def train_epoch_mixup(
+    model: nn.Module,
+    dataloader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    teacher_forcing_ratio: float = 0.5,
+) -> float:
+    """
+    Trains the model for one epoch using mixed teacher forcing and scheduled sampling.
+
+    Args:
+        model: The model to train (T5Wrapper).
+        dataloader: DataLoader for the training data.
+        optimizer: Optimizer for training.
+        criterion: Loss function.
+        device: Device to run the training on.
+        teacher_forcing_ratio: Ratio of teacher forcing. Defaults to 0.5.
+    """
+    model.train()
+    total_loss = 0
+
+    for batch in tqdm(dataloader, desc="Training with Mixup"):
+        src = batch["input_ids"].to(device)
+        tgt = batch["labels"].to(device)
+
+        optimizer.zero_grad()
+
+        if random.random() < teacher_forcing_ratio:
+            # Teacher forcing
+            loss, _ = model(src, tgt)
+        else:
+            # Scheduled sampling with greedy decoding
+            batch_size = src.size(0)
+            max_len = model.max_len
+
+            pred = torch.full(
+                (batch_size, 1),
+                model.tokenizer.bos_token_id,
+                dtype=torch.long,
+                device=device,
+            )
+            finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+            all_logits = []
+
+            for _ in range(max_len - 1):
+                if torch.all(finished):
+                    break
+
+                # Use the full model for decoding step
+                outputs = model.model(
+                    input_ids=src,
+                    decoder_input_ids=pred,
+                    return_dict=True,
+                )
+                logits = outputs.logits
+                all_logits.append(logits[:, -1:, :])  # Append only the last timestep's logits
+
+                next_tokens = torch.argmax(logits[:, -1, :], dim=-1)
+                next_tokens = next_tokens.unsqueeze(1)
+                pred = torch.cat([pred, next_tokens], dim=1)
+
+                finished = finished | (next_tokens.squeeze(1) == model.tokenizer.eos_token_id)
+
+            # Concatenate logits and reshape for loss calculation
+            logits = torch.cat(all_logits, dim=1)
+            logits = logits.view(-1, logits.size(-1))
+            tgt_output = tgt[:, 1:].reshape(-1)
+
+            loss = criterion(logits, tgt_output)
+
+        loss.backward()
+        nn_utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+        optimizer.step()
+
+        total_loss += loss.item()
+
+    return total_loss / len(dataloader)
+
 def evaluate_greedy_search(
     model: nn.Module,
     dataloader: DataLoader,
