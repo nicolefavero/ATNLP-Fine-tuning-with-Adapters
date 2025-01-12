@@ -6,11 +6,8 @@ def run_experiment(n_runs=3):
     """Run training with Mixup augmentation."""
     # Initialize hyperparameters
     hyperparams = {
-        "emb_dim": 128,
-        "n_layers": 2,
-        "n_heads": 8,
-        "forward_dim": 256,
-        "dropout": 0.15,
+        "model_name": "t5-small",  # T5
+        "max_len": 128,
         "learning_rate": 2e-4,
         "batch_size": 16,
         "epochs": 2,
@@ -22,19 +19,27 @@ def run_experiment(n_runs=3):
     size = "length"
 
     results = {}
-    
+
     for run in range(n_runs):
         seed = 42 + run
         (
             _,  # Ignore the model object
-            best_teacher_forcing_accuracy,  # Best token accuracy (teacher forcing)
-            final_greedy_token_acc,  # Final token accuracy (greedy search)
-            final_greedy_seq_acc,  # Final sequence accuracy (greedy search)
-            greedy_action_acc,  # Greedy accuracy grouped by action length
-            greedy_command_acc,  # Greedy accuracy grouped by command length
-            final_oracle_token_acc,  # Final token accuracy (oracle search)
-            final_oracle_seq_acc,  # Final sequence accuracy (oracle search)
-        ) = main(train_path, test_path, size, hyperparams, oracle=True, random_seed=seed)
+            best_teacher_forcing_accuracy,
+            final_greedy_token_acc,
+            final_greedy_seq_acc,
+            greedy_action_acc,
+            greedy_command_acc,
+            final_oracle_token_acc,
+            final_oracle_seq_acc,
+        ) = main(
+            train_path,
+            test_path,
+            size,
+            hyperparams,
+            oracle=True,
+            random_seed=seed,
+            train_fn=train_epoch_mixup,  # Use mixup training function
+        )
 
         # Store results for each run
         results[f"run_{run}"] = {

@@ -20,21 +20,17 @@ def get_dataset_pairs():
     return pairs
 
 
-def run_all_variations(n_runs=5):
-    """Run training 5 times for all dataset size variations with different seeds"""
-    n_runs = n_runs
+def run_all_variations(n_runs=1):
+    """Run training 5 times for all dataset size variations with different seeds."""
     results = {}
 
     # Initialize hyperparameters
     hyperparams = {
-        "emb_dim": 128,
-        "n_layers": 1,
-        "n_heads": 8,
-        "forward_dim": 512,
-        "dropout": 0.05,
+        "model_name": "t5-small",  # T5
         "learning_rate": 7e-4,
         "batch_size": 64,
         "epochs": 20,
+        "max_len": 128,
         "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     }
 
@@ -49,7 +45,11 @@ def run_all_variations(n_runs=5):
         for train_path, test_path, size in get_dataset_pairs():
             print(f"\nTraining dataset size p{size}")
             _, accuracy, g_accuracy, *_ = main(
-                train_path, test_path, f"p_{size}", hyperparams, random_seed=seed,
+                train_path,
+                test_path,
+                f"p_{size}",
+                hyperparams,
+                random_seed=seed,
             )
             results[f"p{size}"].append((accuracy, g_accuracy))
 
@@ -59,16 +59,12 @@ def run_all_variations(n_runs=5):
     print("-" * 50)
 
     for size, accuracies in results.items():
-        accuracies = [(acc.cpu().numpy() if torch.is_tensor(acc) else acc,
-                   g_acc.cpu().numpy() if torch.is_tensor(g_acc) else g_acc) 
-                  for acc, g_acc in accuracies]
         mean = np.mean(accuracies, axis=0)
         std = np.std(accuracies, axis=0)
         print(f"{size:11} | Mean Accuracy: {mean[0]:.4f} ± {std[0]:.4f}")
         print(f"Individual runs: {', '.join(f'{acc[0]:.4f}' for acc in accuracies)}")
         print(f"Mean Greedy Accuracy: {mean[1]:.4f} ± {std[1]:.4f}")
         print(f"Individual runs: {', '.join(f'{acc[1]:.4f}' for acc in accuracies)}\n")
-
 
 
 if __name__ == "__main__":

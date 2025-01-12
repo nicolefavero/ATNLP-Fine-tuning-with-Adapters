@@ -31,3 +31,9 @@ class SCANDataset(Dataset):
             item["output"], truncation=True, padding="max_length", max_length=self.max_len, return_tensors="pt"
         ).input_ids.squeeze(0)
         return {"input_ids": input_ids, "labels": labels}
+    
+if __name__ == "__main__":
+    dataset = SCANDataset("data/simple_split/tasks_train_simple.txt")
+    print("Example from dataset:")
+    print(f"Input IDs: {dataset[0]['input_ids']}")
+    print(f"Labels: {dataset[0]['labels']}")
