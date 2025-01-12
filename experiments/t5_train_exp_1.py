@@ -30,7 +30,7 @@ def run_all_variations(n_runs=5):
         "learning_rate": 1e-4,
         "batch_size": 128,          # Keep larger batch size
         "epochs": 20,
-        "device": "cpu"
+        "device": torch.device("cuda" if torch.cuda.is_available() else "mps")
     }
 
     for train_path, test_path, size in get_dataset_pairs():

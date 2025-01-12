@@ -47,7 +47,7 @@ def run_experiment_3(n_runs=5):
         "learning_rate": 1e-4,
         "batch_size": 128,  # Increased from 64
         "epochs": 20,
-        "device": torch.device("cuda" if torch.cuda.is_available() else "mps"),
+        "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     }
 
     # Fetch dataset pairs
