@@ -215,14 +215,6 @@ def main(
 
     LEARNING_RATE = hyperparams["learning_rate"]
     DEVICE = hyperparams["device"]
-
-    # Dynamic epoch adjustment based on dataset size
-    dataset_size = len(train_loader.dataset)
-    if (100000 // dataset_size) > 100:
-        hyperparams["epochs"] = (100000 // dataset_size)
-    else:
-        hyperparams["epochs"] = min(20, (100000 // dataset_size))
-
     EPOCHS = hyperparams["epochs"]
 
     # Initialize model

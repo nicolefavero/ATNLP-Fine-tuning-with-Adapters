@@ -29,8 +29,8 @@ def run_all_variations(n_runs=1):
     hyperparams = {
         "model_name": "t5-small",  # T5
         "learning_rate": 7e-4,
-        "batch_size": 256,
-        "epochs": 20,  # Placeholder, will be dynamically adjusted
+        "batch_size": 16,
+        "epochs": 20,  
         "max_len": 128,
         "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     }

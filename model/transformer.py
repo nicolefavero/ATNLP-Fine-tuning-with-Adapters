@@ -3,6 +3,10 @@ from torch.utils.data import DataLoader
 import torch.nn as nn
 from dataset import SCANDataset
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+import os
+from torch.utils.data import DistributedSampler
 
 class T5Wrapper(nn.Module):
     def __init__(self, model_name="t5-small", max_len=128):
@@ -33,18 +37,19 @@ class T5Wrapper(nn.Module):
 
 
 def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Initialize the distributed process group
+    dist.init_process_group(backend="nccl")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    device = torch.device(f"cuda:{local_rank}")
 
-    # Initialize model
-    model = T5Wrapper(model_name="t5-small", max_len=128)
-    if torch.cuda.device_count() > 1:
-        print(f"Using {torch.cuda.device_count()} GPUs")
-        model = nn.DataParallel(model)  # Wrap the model for multi-GPU support
-    model = model.to(device)
+    # Wrap the model in DDP
+    model = T5Wrapper(model_name="t5-small", max_len=128).to(device)
+    model = DDP(model, device_ids=[local_rank])
 
     # Load dataset and dataloader
     train_dataset = SCANDataset("data/simple_split/tasks_train_simple.txt", tokenizer_name="t5-small", max_len=128)
-    train_loader = DataLoader(train_dataset, batch_size=4 * torch.cuda.device_count(), shuffle=True)
+    train_sampler = DistributedSampler(train_dataset)
+    train_loader = DataLoader(train_dataset, batch_size=4, sampler=train_sampler)
 
     # Get a batch from the dataset
     batch = next(iter(train_loader))
