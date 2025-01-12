@@ -101,25 +101,27 @@ def train_epoch_mixup(
                 if torch.all(finished):
                     break
 
-                # Use the full model for decoding step
                 outputs = model.model(
                     input_ids=src,
                     decoder_input_ids=pred,
                     return_dict=True,
                 )
-                logits = outputs.logits
-                all_logits.append(logits[:, -1:, :])  # Append only the last timestep's logits
+                logits_step = outputs.logits[:, -1, :]  # Only last time step
+                all_logits.append(logits_step.unsqueeze(1))
 
-                next_tokens = torch.argmax(logits[:, -1, :], dim=-1)
-                next_tokens = next_tokens.unsqueeze(1)
+                next_tokens = torch.argmax(logits_step, dim=-1).unsqueeze(1)
                 pred = torch.cat([pred, next_tokens], dim=1)
-
                 finished = finished | (next_tokens.squeeze(1) == model.tokenizer.eos_token_id)
 
             # Concatenate logits and reshape for loss calculation
-            logits = torch.cat(all_logits, dim=1)
-            logits = logits.view(-1, logits.size(-1))
-            tgt_output = tgt[:, 1:].reshape(-1)
+            logits = torch.cat(all_logits, dim=1)  # Shape: (batch_size, seq_len, vocab_size)
+            if logits.size(1) > tgt[:, 1:].size(1):
+                logits = logits[:, :tgt[:, 1:].size(1), :]  # Trim logits to match target length
+            elif logits.size(1) < tgt[:, 1:].size(1):
+                tgt = tgt[:, :logits.size(1) + 1]  # Trim target to match logits length
+
+            logits = logits.reshape(-1, logits.size(-1))  # Shape: (batch_size * seq_len, vocab_size)
+            tgt_output = tgt[:, 1:].reshape(-1)  # Shape: (batch_size * seq_len)
 
             loss = criterion(logits, tgt_output)
 
@@ -130,6 +132,7 @@ def train_epoch_mixup(
         total_loss += loss.item()
 
     return total_loss / len(dataloader)
+
 
 def evaluate_greedy_search(
     model: nn.Module,
@@ -167,12 +170,18 @@ def evaluate_greedy_search(
             src = batch["input_ids"].to(device)
             tgt = batch["labels"].to(device)
 
-            loss, _ = model(src, tgt)
-            total_loss += loss.item()
-
-            pred_ids = model(src)
-            pred_ids = pred_ids[:, 1:]  # Skip BOS token for predictions
+            outputs = model.model.generate(input_ids=src, max_length=model.max_len)
+            pred_ids = outputs[:, 1:]  # Skip BOS token for predictions
             tgt_output = tgt[:, 1:]  # Skip BOS token for targets
+
+            # Calculate loss
+            logits = model.model(
+                input_ids=src, decoder_input_ids=tgt[:, :-1], return_dict=True
+            ).logits
+            logits = logits.reshape(-1, logits.size(-1))
+            tgt_output_flat = tgt[:, 1:].reshape(-1)
+            loss = criterion(logits, tgt_output_flat)
+            total_loss += loss.item()
 
             for i in range(len(pred_ids)):
                 token_acc, seq_acc = calculate_accuracy(
@@ -188,17 +197,14 @@ def evaluate_greedy_search(
     return avg_loss, avg_token_acc, avg_seq_acc, {}, {}
 
 def main(
-    train_path: str,
-    test_path: str,
-    model_suffix: str,
+    train_loader,
+    test_loader,
+    size: str,
     hyperparams: dict,
-    random_seed: int = 42,
     oracle: bool = False,
-    train_fn: Callable = train_epoch_teacher_forcing,
-) -> Tuple[T5Wrapper, float, float, float, dict, dict, float, float]:
-    """
-    Main function to train and evaluate the model on the SCAN dataset.
-    """
+    random_seed: int = 42,
+    train_fn=train_epoch_mixup,
+):
     def set_seed(random_seed):
         random.seed(random_seed)
         torch.manual_seed(random_seed)
@@ -208,20 +214,24 @@ def main(
     set_seed(random_seed)
 
     LEARNING_RATE = hyperparams["learning_rate"]
-    BATCH_SIZE = hyperparams["batch_size"]
-    EPOCHS = hyperparams["epochs"]
     DEVICE = hyperparams["device"]
 
-    train_dataset = SCANDataset(train_path, tokenizer_name="t5-small", max_len=128)
-    test_dataset = SCANDataset(test_path, tokenizer_name="t5-small", max_len=128)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
+    # Dynamic epoch adjustment based on dataset size
+    dataset_size = len(train_loader.dataset)
+    if (100000 // dataset_size) > 100:
+        hyperparams["epochs"] = (100000 // dataset_size)
+    else:
+        hyperparams["epochs"] = min(20, (100000 // dataset_size))
 
-    model = T5Wrapper(model_name="t5-small", max_len=128).to(DEVICE)
+    EPOCHS = hyperparams["epochs"]
 
+    # Initialize model
+    model = T5Wrapper(model_name=hyperparams["model_name"], max_len=hyperparams["max_len"]).to(DEVICE)
+
+    # Define optimizer and loss function
     criterion = nn.CrossEntropyLoss(ignore_index=model.tokenizer.pad_token_id)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
-    writer = SummaryWriter(log_dir=f"runs/{model_suffix}")
+    writer = SummaryWriter(log_dir=f"runs/{size}")
 
     best_accuracy = 0.0
 
@@ -243,10 +253,10 @@ def main(
 
         if token_acc > best_accuracy:
             best_accuracy = token_acc
-            torch.save(model.state_dict(), f"model/best_model_{model_suffix}.pt")
+            torch.save(model.state_dict(), f"model/best_model_{size}.pt")
 
     writer.close()
 
-    model.load_state_dict(torch.load(f"model/best_model_{model_suffix}.pt"))
+    model.load_state_dict(torch.load(f"model/best_model_{size}.pt"))
 
     return model, best_accuracy, token_acc, seq_acc, {}, {}, 0.0, 0.0

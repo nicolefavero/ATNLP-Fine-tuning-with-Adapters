@@ -1,6 +1,7 @@
-from train import main
+from train import main, train_epoch_teacher_forcing
 from dataset import SCANDataset
 import torch
+from torch.utils.data import DataLoader
 import numpy as np
 from rich import print
 from rich.traceback import install
@@ -21,15 +22,15 @@ def get_dataset_pairs():
 
 
 def run_all_variations(n_runs=1):
-    """Run training 5 times for all dataset size variations with different seeds."""
+    """Run training n times for all dataset size variations with different seeds."""
     results = {}
 
     # Initialize hyperparameters
     hyperparams = {
         "model_name": "t5-small",  # T5
         "learning_rate": 7e-4,
-        "batch_size": 64,
-        "epochs": 20,
+        "batch_size": 8,
+        "epochs": 20,  # Placeholder, will be dynamically adjusted
         "max_len": 128,
         "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     }
@@ -44,12 +45,31 @@ def run_all_variations(n_runs=1):
 
         for train_path, test_path, size in get_dataset_pairs():
             print(f"\nTraining dataset size p{size}")
+
+            # Load datasets
+            train_dataset = SCANDataset(
+                train_path, tokenizer_name=hyperparams["model_name"], max_len=hyperparams["max_len"]
+            )
+            test_dataset = SCANDataset(
+                test_path, tokenizer_name=hyperparams["model_name"], max_len=hyperparams["max_len"]
+            )
+
+            # Create DataLoaders
+            train_loader = DataLoader(
+                train_dataset, batch_size=hyperparams["batch_size"], shuffle=True
+            )
+            test_loader = DataLoader(
+                test_dataset, batch_size=hyperparams["batch_size"]
+            )
+
+            # Run main training loop using teacher forcing
             _, accuracy, g_accuracy, *_ = main(
-                train_path,
-                test_path,
+                train_loader,
+                test_loader,
                 f"p_{size}",
                 hyperparams,
                 random_seed=seed,
+                train_fn=train_epoch_teacher_forcing,  # Explicitly pass teacher forcing
             )
             results[f"p{size}"].append((accuracy, g_accuracy))
 

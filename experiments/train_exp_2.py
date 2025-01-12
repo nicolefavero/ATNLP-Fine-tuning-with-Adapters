@@ -1,16 +1,18 @@
 from train import main, train_epoch_mixup
+from dataset import SCANDataset
 import torch
+import random
+from torch.utils.data import DataLoader, Subset
 
 
-def run_experiment(n_runs=3):
-    """Run training with Mixup augmentation."""
+def run_experiment(n_runs=3, dataset_fraction=0.01):
+    """Run training with Mixup augmentation using a subset of the dataset."""
     # Initialize hyperparameters
     hyperparams = {
         "model_name": "t5-small",  # T5
         "max_len": 128,
         "learning_rate": 2e-4,
-        "batch_size": 16,
-        "epochs": 2,
+        "batch_size": 8,
         "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     }
 
@@ -18,10 +20,34 @@ def run_experiment(n_runs=3):
     test_path = "data/length_split/tasks_test_length.txt"
     size = "length"
 
+    # Load datasets
+    full_train_dataset = SCANDataset(train_path, tokenizer_name="t5-small", max_len=128)
+    full_test_dataset = SCANDataset(test_path, tokenizer_name="t5-small", max_len=128)
+
+    # Create subset indices
+    train_subset_size = int(len(full_train_dataset) * dataset_fraction)
+    test_subset_size = int(len(full_test_dataset) * dataset_fraction)
+
+    train_indices = random.sample(range(len(full_train_dataset)), train_subset_size)
+    test_indices = random.sample(range(len(full_test_dataset)), test_subset_size)
+
+    train_dataset = Subset(full_train_dataset, train_indices)
+    test_dataset = Subset(full_test_dataset, test_indices)
+
+    # Replace dataset paths with dataloaders
+    train_loader = DataLoader(
+        train_dataset, batch_size=hyperparams["batch_size"], shuffle=True
+    )
+    test_loader = DataLoader(
+        test_dataset, batch_size=hyperparams["batch_size"], shuffle=False
+    )
+
     results = {}
 
     for run in range(n_runs):
         seed = 42 + run
+
+        # Use sampled dataloaders in the training process
         (
             _,  # Ignore the model object
             best_teacher_forcing_accuracy,
@@ -32,8 +58,8 @@ def run_experiment(n_runs=3):
             final_oracle_token_acc,
             final_oracle_seq_acc,
         ) = main(
-            train_path,
-            test_path,
+            train_loader,
+            test_loader,
             size,
             hyperparams,
             oracle=True,
