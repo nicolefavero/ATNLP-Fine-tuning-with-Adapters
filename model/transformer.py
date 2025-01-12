@@ -36,11 +36,15 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Initialize model
-    model = T5Wrapper(model_name="t5-small", max_len=128).to(device)
+    model = T5Wrapper(model_name="t5-small", max_len=128)
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs")
+        model = nn.DataParallel(model)  # Wrap the model for multi-GPU support
+    model = model.to(device)
 
     # Load dataset and dataloader
     train_dataset = SCANDataset("data/simple_split/tasks_train_simple.txt", tokenizer_name="t5-small", max_len=128)
-    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=4 * torch.cuda.device_count(), shuffle=True)
 
     # Get a batch from the dataset
     batch = next(iter(train_loader))
