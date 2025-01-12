@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import math
 
-
+# try 2
 class MultiHeadAttention(nn.Module):
     def __init__(self, emb_dim, num_heads):
         super().__init__()
