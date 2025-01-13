@@ -26,7 +26,7 @@ def run_all_variations(n_runs=5):
 
     # Initialize hyperparameters
     hyperparams = {
-        "model_name": "google/t5-efficient-tiny",  # Much smaller than t5-small
+        "model_name": "google-t5/t5-small",  # Much smaller than t5-small
         "learning_rate": 1e-4,
         "batch_size": 128,          # Keep larger batch size
         "epochs": 20,

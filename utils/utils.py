@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from model.t5_transformer import T5Wrapper, T5Config
 
 
 def calculate_accuracy(pred, target, pad_idx, eos_idx):
