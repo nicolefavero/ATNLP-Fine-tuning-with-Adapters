@@ -36,7 +36,7 @@ class T5Wrapper(nn.Module):
         # If no LoRA config provided, define a default one
         if lora_config is None:
             lora_config = LoraConfig(
-                r=8,                    # rank of the LoRA matrices
+                r=32,                    # rank of the LoRA matrices
                 lora_alpha=32,          # LoRA scaling factor
                 lora_dropout=0.05,      # dropout for LoRA layers
                 bias="none",            # typically "none" or "lora_only"
