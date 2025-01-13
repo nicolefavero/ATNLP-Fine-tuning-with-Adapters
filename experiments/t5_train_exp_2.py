@@ -34,7 +34,7 @@ def run_experiment(n_runs=3):
             greedy_action_acc,  # Greedy accuracy grouped by action length
             greedy_command_acc,  # Greedy accuracy grouped by command length
             *_,
-        ) = main(train_path, test_path, size, hyperparams, oracle=False, random_seed=seed)
+        ) = main(train_path, test_path, size, hyperparams, oracle=False, random_seed=seed, train_fn=train_epoch_mixup)
 
         # Store results for each run
         results[f"run_{run}"] = {

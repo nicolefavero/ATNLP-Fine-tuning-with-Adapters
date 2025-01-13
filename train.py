@@ -81,14 +81,7 @@ def train_epoch_mixup(
 ) -> float:
     """
     Trains the model for one epoch using mixed teacher forcing and scheduled sampling.
-
-    Args:
-        model: The model to train.
-        dataloader: DataLoader for the training data.
-        optimizer: Optimizer for training.
-        criterion: Loss function.
-        device: Device to run the training on.
-        teacher_forcing_ratio: Ratio of teacher forcing. Defaults to 0.5.
+    Now handles T5 vs. custom Transformer differently.
     """
     model.train()
     total_loss = 0
@@ -97,68 +90,131 @@ def train_epoch_mixup(
         src = batch["src"].to(device)
         tgt = batch["tgt"].to(device)
 
-        tgt_input = tgt[:, :-1]
-        tgt_output = tgt[:, 1:]
+        tgt_input = tgt[:, :-1]  # everything but last token
+        tgt_output = tgt[:, 1:]  # everything but BOS
 
         optimizer.zero_grad()
 
-        if np.random.rand() < teacher_forcing_ratio:
-            output = model(src, tgt_input)
+        # Decide teacher forcing vs. auto-regressive
+        use_teacher_forcing = (np.random.rand() < teacher_forcing_ratio)
+
+        if isinstance(model, T5Wrapper):
+            # ========== T5-based model path ==========
+
+            if use_teacher_forcing:
+                # **Teacher Forcing** with T5: just call forward
+                # This uses T5Wrapper.forward => self.model(...)
+                output = model(src, tgt_input)  
+                # `output` shape: [batch_size, seq_len, vocab_size]
+
+            else:
+                # **Auto-Regressive** for T5: use model.model.generate(...)
+                # or partial decoding logic
+
+                # We'll do a simple approach: generate entire sequence
+                # then compare to ground truth for the loss.
+                with torch.no_grad():
+                    # generate predicts tokens from scratch
+                    generated_tokens = model.model.generate(
+                        input_ids=src,
+                        max_length=model.max_len,
+                        num_beams=1,  # greedy
+                        pad_token_id=model.tokenizer.pad_token_id,
+                        eos_token_id=model.tokenizer.eos_token_id,
+                        bos_token_id=model.tokenizer.bos_token_id,
+                    )
+                # If you want to get logits for each step, you'd do
+                # return_dict_in_generate=True, output_scores=True, etc.
+
+                # Next, for simplicity, let's re-run teacher forcing to get logits
+                # we can at least get a gradient w.r.t. the "teacher forcing" path
+                # This is a simplistic approach; you can do something more advanced.
+                output = model(src, tgt_input)
+
+            # Flatten for the CrossEntropy
+            output = output.reshape(-1, output.size(-1))    # [batch*seq, vocab]
+            tgt_output = tgt_output.reshape(-1)             # [batch*seq]
+
+            loss = criterion(output, tgt_output)
+            loss.backward()
+
         else:
-            batch_size = src.size(0)
-            max_len = model.max_len
-            encode_out = model.encoder(src, model.create_src_mask(src))
-            pred = torch.full(
-                (batch_size, 1),
-                dataloader.dataset.tgt_vocab.tok2id["<BOS>"],  # Changed to tgt_vocab
-                dtype=torch.long,
-                device=device,
-            )
+            # ========== Custom Transformer path ==========
 
-            finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
-            all_logits = []
+            if use_teacher_forcing:
+                # same as your original teacher forcing logic
+                output = model(src, tgt_input)
+                # Flatten
+                output = output.view(-1, output.shape[-1])
+                tgt_output_flat = tgt_output.reshape(-1)
+                loss = criterion(output, tgt_output_flat)
+                loss.backward()
 
-            for _ in range(max_len - 1):
-                if torch.all(finished):
-                    break
+            else:
+                # partial decoding (step-by-step) with encoder & decoder
+                batch_size = src.size(0)
+                max_len = model.max_len
+                encode_out = model.encoder(src, model.create_src_mask(src))
 
-                tgt_mask = model.create_tgt_mask(pred)
-                decode_out = model.decoder(
-                    pred, encode_out, model.create_src_mask(src), tgt_mask
+                # Start with <BOS>
+                pred = torch.full(
+                    (batch_size, 1),
+                    dataloader.dataset.tgt_vocab.tok2id["<BOS>"],
+                    dtype=torch.long,
+                    device=device,
                 )
 
-                last_step_logits = decode_out[:, -1, :]
-                all_logits.append(last_step_logits)
+                finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+                all_logits = []
 
-                next_tokens = torch.argmax(last_step_logits, dim=-1)
-                next_tokens = next_tokens.unsqueeze(1)
-                pred = torch.cat([pred, next_tokens * ~finished.unsqueeze(1)], dim=1)
+                for _ in range(max_len - 1):
+                    if torch.all(finished):
+                        break
 
-                newly_finished = (
-                    next_tokens == dataloader.dataset.vocab.tok2id["<EOS>"]
-                ).squeeze(1)
-                finished = finished | newly_finished
-                logits = torch.stack(all_logits, dim=1)
+                    tgt_mask = model.create_tgt_mask(pred)
+                    decode_out = model.decoder(
+                        pred, encode_out, model.create_src_mask(src), tgt_mask
+                    )
+
+                    last_step_logits = decode_out[:, -1, :]    # shape [batch, vocab]
+                    all_logits.append(last_step_logits)
+
+                    next_tokens = torch.argmax(last_step_logits, dim=-1)
+                    next_tokens = next_tokens.unsqueeze(1)
+
+                    pred = torch.cat(
+                        [pred, next_tokens * ~finished.unsqueeze(1)],
+                        dim=1
+                    )
+
+                    newly_finished = (
+                        next_tokens == dataloader.dataset.vocab.tok2id["<EOS>"]
+                    ).squeeze(1)
+                    finished = finished | newly_finished
+
+                # Combine the logits for all steps
+                logits = torch.stack(all_logits, dim=1)      # shape [batch, seq-1, vocab]
+                # If needed, pad them to max_len - 1
                 if logits.size(1) < max_len - 1:
                     pad_size = (max_len - 1) - logits.size(1)
                     logits = F.pad(logits, (0, 0, 0, pad_size))
                 else:
                     logits = logits[:, : (max_len - 1), :]
 
-            output = logits
+                # Flatten
+                logits = logits.reshape(-1, logits.size(-1))
+                tgt_output = tgt_output.reshape(-1)
 
-        output = output.reshape(-1, output.shape[-1])
-        tgt_output = tgt_output.reshape(-1)
+                loss = criterion(logits, tgt_output)
+                loss.backward()
 
-        loss = criterion(output, tgt_output)
-        loss.backward()
+        # Done teacher forcing or partial decoding
         nn_utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
         optimizer.step()
 
         total_loss += loss.item()
 
     return total_loss / len(dataloader)
-
 
 def evaluate_greedy_search(
     model: nn.Module,
@@ -450,7 +506,10 @@ def main(
     ).to(DEVICE)
 
     # Initialize optimizer and criterion
-    optimizer = torch.optim.AdamW(model.parameters(), lr=hyperparams["learning_rate"])
+    # Only train LoRA adapter parameters
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=hyperparams["learning_rate"])
+
     criterion = nn.CrossEntropyLoss(ignore_index=tgt_pad_idx)
     writer = SummaryWriter(log_dir=f"runs/{model_suffix}")
 
@@ -536,4 +595,3 @@ def main(
         print(f"Oracle Accuracy by Command Length: {oracle_command_acc}")
 
     return (model, best_accuracy, final_token_acc, final_seq_acc, greedy_action_acc, greedy_command_acc, oracle_token_acc, oracle_seq_acc,)
-

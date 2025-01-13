@@ -56,7 +56,7 @@ def greedy_decode(
     if isinstance(model, T5Wrapper):
         # Use T5's generate method
         outputs = model.model.generate(
-            src,
+            input_ids=src,
             max_length=max_len,
             num_beams=1,  # greedy decoding
             pad_token_id=tgt_pad_idx,

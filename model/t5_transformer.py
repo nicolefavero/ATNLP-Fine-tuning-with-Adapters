@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from transformers import T5ForConditionalGeneration, T5Tokenizer, T5Config
+from peft import LoraConfig, get_peft_model
 
 class T5Wrapper(nn.Module):
     """Wrapper around HuggingFace's T5 model to maintain compatibility with existing code."""
@@ -13,6 +14,7 @@ class T5Wrapper(nn.Module):
         model_name="t5-small",
         max_len=128,
         model_config=None,  # Add this parameter
+        lora_config=None,
         **kwargs
     ):
         super().__init__()
@@ -30,6 +32,25 @@ class T5Wrapper(nn.Module):
 
         # Resize token embeddings if needed
         self.model.resize_token_embeddings(max(src_vocab_size, self.tokenizer.vocab_size))
+
+        # If no LoRA config provided, define a default one
+        if lora_config is None:
+            lora_config = LoraConfig(
+                r=8,                    # rank of the LoRA matrices
+                lora_alpha=32,          # LoRA scaling factor
+                lora_dropout=0.05,      # dropout for LoRA layers
+                bias="none",            # typically "none" or "lora_only"
+                task_type="SEQ_2_SEQ_LM",
+                # For T5, the attention projections might be named "q", "k", "v", "o".
+                # Adjust if you see different layer names in your model.
+                target_modules=["q", "k", "v", "o"]
+            )
+
+        # Wrap the original T5 model with LoRA
+        self.model = get_peft_model(self.model, lora_config)
+
+        # Set model to train mode (LoRA layers will be trainable; base weights remain frozen)
+        self.model.train()
 
 
     def forward(self, src, tgt):
