@@ -487,8 +487,16 @@ def main(
     else:
         hyperparams["epochs"] = min(20, (100000 // data_len))
 
+    # Override epochs for p_32 for fine-tuning
+    if model_suffix == "p32":
+         hyperparams["epochs"] = 30
+
+    # Override epochs for p_64 for fine-tuning
+    if model_suffix == "p64":
+         hyperparams["epochs"] = 20
+
     # Now override with fixed 100 epochs
-    hyperparams["epochs"] = 30
+    # hyperparams["epochs"] = 50
 
     EPOCHS = hyperparams["epochs"]
 

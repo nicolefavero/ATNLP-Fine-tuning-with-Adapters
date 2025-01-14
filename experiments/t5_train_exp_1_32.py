@@ -7,14 +7,14 @@ from rich.traceback import install
 
 install()
 
-def run_p64(n_runs=1):
-    """Run training n_runs times for the p_64 dataset with different seeds."""
+def run_p32(n_runs=1):
+    """Run training n_runs times for the p_32 dataset with different seeds."""
     results = []
 
-    # Paths for p64
-    train_path = "data/simple_split/size_variations/tasks_train_simple_p64.txt"
-    test_path = "data/simple_split/size_variations/tasks_test_simple_p64.txt"
-    size_str = "p64"
+    # Paths for p32
+    train_path = "data/simple_split/size_variations/tasks_train_simple_p32.txt"
+    test_path = "data/simple_split/size_variations/tasks_test_simple_p32.txt"
+    size_str = "p32"
 
     # Initialize hyperparameters
     hyperparams = {
@@ -37,11 +37,12 @@ def run_p64(n_runs=1):
             hyperparams,
             random_seed=seed,
             model_class=T5Wrapper,  # specify T5Wrapper as the model class
+            train_fn=train_epoch_mixup
         )
         results.append((accuracy, g_accuracy))
 
     # Final results summary
-    print("\nFinal Results Summary for p64:")
+    print("\nFinal Results Summary for p32:")
     print("=" * 50)
     print("Mean Accuracy ± Std Dev (Teacher Forcing) | Mean Accuracy ± Std Dev (Greedy)")
 
@@ -62,4 +63,4 @@ def run_p64(n_runs=1):
     print(f"Individual runs: {', '.join(f'{acc[1]:.4f}' for acc in accuracies)}\n")
 
 if __name__ == "__main__":
-    run_p64()
+    run_p32()
