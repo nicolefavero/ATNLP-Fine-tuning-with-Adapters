@@ -487,6 +487,9 @@ def main(
     else:
         hyperparams["epochs"] = min(20, (100000 // data_len))
 
+    # Now override with fixed 100 epochs
+    hyperparams["epochs"] = 30
+
     EPOCHS = hyperparams["epochs"]
 
     # Get special tokens
